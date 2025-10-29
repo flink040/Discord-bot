@@ -15,6 +15,11 @@ export function loadCommands(): Map<string, CommandDef> {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const mod = require(full);
     const def: CommandDef = (mod.default ?? mod) as CommandDef;
+    if (def?.enabled === false) {
+      console.log(`[commands] Skipped ${def.data?.name ?? file}: disabled`);
+      continue;
+    }
+
     if (!def?.data?.name || typeof def.execute !== 'function') {
       console.warn(`[commands] Skipped ${file}: invalid command def`);
       continue;
