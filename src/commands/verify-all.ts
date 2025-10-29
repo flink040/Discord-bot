@@ -25,16 +25,6 @@ function normalize(str: string) {
   return str.normalize('NFKC').toLowerCase();
 }
 
-async function ensureMembers(interaction: ChatInputCommandInteraction) {
-  if (!interaction.guild) return;
-  try {
-    await interaction.guild.members.fetch();
-  } catch (err) {
-    console.error('[verify-all] Failed to fetch guild members', err);
-    throw new Error('Konnte die Mitgliederliste nicht abrufen.');
-  }
-}
-
 async function updateNickname(member: GuildMember, nickname: string, allowNicknameChange: boolean): Promise<boolean> {
   if (!allowNicknameChange) return false;
   if (!member.manageable) return false;
@@ -105,14 +95,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     return;
   }
 
-  try {
-    await ensureMembers(interaction);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unbekannter Fehler beim Abrufen der Mitgliederliste.';
-    await interaction.editReply(`❌ ${message}`);
-    return;
-  }
-
   let matched = 0;
   let renamed = 0;
   let roleAssigned = 0;
@@ -123,7 +105,15 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     const nickname = row.minecraft_username;
     if (!discordId || !nickname) continue;
 
-    const member = guild.members.cache.get(discordId);
+    let member = guild.members.cache.get(discordId);
+    if (!member) {
+      try {
+        member = await guild.members.fetch({ user: discordId }).catch(() => undefined);
+      } catch (err) {
+        console.warn(`[verify-all] Failed to fetch member ${discordId}:`, err);
+        member = undefined;
+      }
+    }
     if (!member) {
       notFound += 1;
       continue;
