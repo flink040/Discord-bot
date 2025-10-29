@@ -1,9 +1,10 @@
-
 {
   "name": "discord-bot-railway-starter-ts-autoreg",
   "version": "1.1.0",
   "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "type": "commonjs",
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
@@ -12,6 +13,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.77.0",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5"
   },
