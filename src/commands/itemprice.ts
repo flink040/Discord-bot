@@ -125,6 +125,8 @@ type BidSample = {
   collectedAt: Date;
 };
 
+const sparklineBars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
+
 function extractBids(rows: SnapshotRow[]): BidSample[] {
   return rows
     .map(row => {
@@ -147,6 +149,49 @@ function averageAmount(samples: BidSample[], days?: number): number | null {
   if (relevant.length === 0) return null;
   const sum = relevant.reduce((acc, sample) => acc + sample.amount, 0);
   return sum / relevant.length;
+}
+
+function buildSparkline(samples: BidSample[], maxPoints = 20): string | null {
+  if (samples.length < 2) return null;
+
+  const values = samples.map(sample => sample.amount);
+  const points = Math.min(maxPoints, values.length);
+
+  const selected = Array.from({ length: points }, (_, index) => {
+    const sourceIndex = Math.round((values.length - 1) * (points === 1 ? 0 : index / (points - 1)));
+    return values[sourceIndex];
+  });
+
+  const min = Math.min(...selected);
+  const max = Math.max(...selected);
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+
+  if (min === max) {
+    return sparklineBars[sparklineBars.length - 1].repeat(points);
+  }
+
+  const scale = sparklineBars.length - 1;
+  return selected
+    .map(value => {
+      const normalized = (value - min) / (max - min);
+      const barIndex = Math.min(scale, Math.max(0, Math.round(normalized * scale)));
+      return sparklineBars[barIndex];
+    })
+    .join('');
+}
+
+function formatDateRange(samples: BidSample[]): string | null {
+  if (samples.length === 0) return null;
+  const formatter = new Intl.DateTimeFormat('de-DE', {
+    dateStyle: 'short',
+  });
+
+  const first = formatter.format(samples[0].collectedAt);
+  const last = formatter.format(samples[samples.length - 1].collectedAt);
+
+  if (first === last) return first;
+  return `${first} – ${last}`;
 }
 
 function formatPrice(value: number | null, currency: string | null, label: string): string {
@@ -200,6 +245,8 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     const avg7 = averageAmount(bids, 7);
     const avg30 = averageAmount(bids, 30);
     const avgAll = averageAmount(bids);
+    const sparkline = buildSparkline(bids);
+    const dateRange = formatDateRange(bids);
 
     const lines = [
       `**Preisdaten für ${item.name}**`,
@@ -209,6 +256,13 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       formatPrice(avgAll, currency, 'Durchschnitt gesamt'),
       `Anzahl Datensätze: ${bids.length}`,
     ];
+
+    if (sparkline) {
+      lines.push(`Verlauf: ${sparkline}`);
+      if (dateRange) {
+        lines.push(`Zeitraum: ${dateRange}`);
+      }
+    }
 
     await interaction.editReply(lines.join('\n'));
   } catch (err) {
