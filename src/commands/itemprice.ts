@@ -10,7 +10,13 @@ import {
   type MessageComponentInteraction,
   type MessageEditAttachmentData,
 } from 'discord.js';
-import { Chart, registerables, type ChartConfiguration, type Plugin } from 'chart.js';
+import {
+  Chart,
+  registerables,
+  type ChartConfiguration,
+  type ChartType,
+  type Plugin,
+} from 'chart.js';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
@@ -232,6 +238,7 @@ const chartAverageAccent = '#f97316';
 const chartGridColor = 'rgba(148, 163, 184, 0.18)';
 const chartAxisColor = '#e2e8f0';
 const chartTitleColor = '#f8fafc';
+const chartAxisFontFamily = 'Inter, "Segoe UI", sans-serif';
 const chartLabelFormatter = new Intl.DateTimeFormat('de-DE', {
   day: '2-digit',
   month: '2-digit',
@@ -257,6 +264,68 @@ const chartBackgroundPlugin: Plugin<'line'> = {
     ctx.restore();
   },
 };
+
+type AxisLabelFont = {
+  family: string;
+  size: number;
+  weight?: string | number;
+};
+
+type AxisLabelOptions = {
+  text: string;
+  color: string;
+  font: AxisLabelFont;
+  padding?: number;
+};
+
+type AxisLabelsPluginOptions = {
+  x?: AxisLabelOptions;
+  y?: AxisLabelOptions;
+};
+
+function toFontString(font: AxisLabelFont): string {
+  const weight = font.weight ?? 400;
+  return `${weight} ${font.size}px ${font.family}`;
+}
+
+const chartAxisLabelsPlugin: Plugin<'line', AxisLabelsPluginOptions> = {
+  id: 'customAxisLabels',
+  afterDraw: (chart, _args, opts) => {
+    if (!opts) return;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return;
+
+    ctx.save();
+
+    if (opts.x) {
+      const { text, color, font, padding = 12 } = opts.x;
+      ctx.font = toFontString(font);
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(text, (chartArea.left + chartArea.right) / 2, chartArea.bottom + padding);
+    }
+
+    if (opts.y) {
+      const { text, color, font, padding = 12 } = opts.y;
+      ctx.font = toFontString(font);
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.translate(chartArea.left - padding, (chartArea.top + chartArea.bottom) / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(text, 0, 0);
+    }
+
+    ctx.restore();
+  },
+};
+
+declare module 'chart.js' {
+  interface PluginOptionsByType<TType extends ChartType> {
+    customAxisLabels?: AxisLabelsPluginOptions;
+  }
+}
 
 const viewAverageWindowDays: Record<ViewMode, number> = {
   '7d': 7,
@@ -348,6 +417,12 @@ async function renderPriceChart(options: {
     return null;
   }
 
+  const axisLabelFont: AxisLabelFont = {
+    family: chartAxisFontFamily,
+    size: 14,
+    weight: 500,
+  };
+
   const config: ChartConfiguration<'line'> = {
     type: 'line',
     data: {
@@ -358,15 +433,20 @@ async function renderPriceChart(options: {
       responsive: false,
       maintainAspectRatio: false,
       layout: {
-        padding: 24,
+        padding: {
+          top: 28,
+          right: 32,
+          bottom: 72,
+          left: 72,
+        },
       },
       plugins: {
         legend: {
-          display: datasets.length > 1,
+          display: datasets.length > 0,
           labels: {
             color: chartAxisColor,
             font: {
-              family: 'Inter, "Segoe UI", sans-serif',
+              family: chartAxisFontFamily,
               size: 13,
               weight: 600,
             },
@@ -377,9 +457,23 @@ async function renderPriceChart(options: {
           text: 'Preisverlauf',
           color: chartTitleColor,
           font: {
-            family: 'Inter, "Segoe UI", sans-serif',
+            family: chartAxisFontFamily,
             size: 18,
             weight: 600,
+          },
+        },
+        customAxisLabels: {
+          x: {
+            text: 'Datum',
+            color: chartAxisColor,
+            font: axisLabelFont,
+            padding: 36,
+          },
+          y: {
+            text: `Preis${suffix ? ` (${suffix})` : ''}`,
+            color: chartAxisColor,
+            font: axisLabelFont,
+            padding: 40,
           },
         },
         tooltip: { enabled: false },
@@ -392,21 +486,11 @@ async function renderPriceChart(options: {
             autoSkip: true,
             autoSkipPadding: 14,
             font: {
-              family: 'Inter, "Segoe UI", sans-serif',
+              family: chartAxisFontFamily,
             },
           },
           grid: {
             color: chartGridColor,
-          },
-          title: {
-            display: true,
-            text: 'Datum',
-            color: chartAxisColor,
-            font: {
-              family: 'Inter, "Segoe UI", sans-serif',
-              size: 14,
-              weight: 500,
-            },
           },
         },
         y: {
@@ -414,21 +498,11 @@ async function renderPriceChart(options: {
             color: chartAxisColor,
             callback: value => `${currencyFormatter.format(Number(value))}${suffix ? ` ${suffix}` : ''}`,
             font: {
-              family: 'Inter, "Segoe UI", sans-serif',
+              family: chartAxisFontFamily,
             },
           },
           grid: {
             color: chartGridColor,
-          },
-          title: {
-            display: true,
-            text: `Preis${suffix ? ` (${suffix})` : ''}`,
-            color: chartAxisColor,
-            font: {
-              family: 'Inter, "Segoe UI", sans-serif',
-              size: 14,
-              weight: 500,
-            },
           },
         },
       },
@@ -442,7 +516,7 @@ async function renderPriceChart(options: {
         },
       },
     },
-    plugins: [chartBackgroundPlugin],
+    plugins: [chartBackgroundPlugin, chartAxisLabelsPlugin],
   } satisfies ChartConfiguration<'line'>;
 
   return chartJSNodeCanvas.renderToBuffer(config, 'image/png');
