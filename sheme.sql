@@ -63,6 +63,7 @@ CREATE TABLE public.guild_settings (
   admin_role_ids ARRAY,
   mute_role_id text,
   audit_webhook_url text,
+  moderation_channel_id text,
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT guild_settings_pkey PRIMARY KEY (guild_id)
 );
