@@ -75,7 +75,7 @@ Die Slash-Commands im Überblick:
 ## Adding Commands
 Create `src/commands/<name>.ts` and export `{ data, execute }`:
 ```ts
-import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 
 export const data = new SlashCommandBuilder()
@@ -83,7 +83,7 @@ export const data = new SlashCommandBuilder()
   .setDescription('Replies with a friendly greeting!');
 
 export const execute = async (interaction: ChatInputCommandInteraction) => {
-  await interaction.reply({ content: '👋 Hey there!', ephemeral: true });
+  await interaction.reply({ content: '👋 Hey there!', flags: MessageFlags.Ephemeral });
 };
 
 export default { data: data.toJSON(), execute } satisfies CommandDef;

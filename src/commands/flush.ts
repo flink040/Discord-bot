@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
@@ -105,23 +106,29 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   if (!interaction.inGuild() || !interaction.channel) {
     await interaction.reply({
       content: 'Dieser Befehl kann nur in einem Server-Channel verwendet werden.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages)) {
-    await interaction.reply({ content: 'Du benötigst die Berechtigung **Nachrichten verwalten**.', ephemeral: true });
+    await interaction.reply({
+      content: 'Du benötigst die Berechtigung **Nachrichten verwalten**.',
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
   if (!interaction.channel.isTextBased() || !('bulkDelete' in interaction.channel)) {
-    await interaction.reply({ content: 'In diesem Channel können keine Nachrichten gelöscht werden.', ephemeral: true });
+    await interaction.reply({
+      content: 'In diesem Channel können keine Nachrichten gelöscht werden.',
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 
   const channel = interaction.channel as GuildTextBasedChannel;
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const sub = interaction.options.getSubcommand();
   let result: DeleteResult = { deleted: 0, skippedOld: 0 };
