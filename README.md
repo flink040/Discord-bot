@@ -55,7 +55,10 @@ SUPABASE_URL=https://<projekt>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
 ```
 
-Der Slash-Command `/item` zeigt Einträge aus der Tabelle `items` an. Über die optionale Eingabe `name` lässt sich nach einer Teilzeichenfolge filtern. Es werden ausschließlich freigegebene (`approved`) Items angezeigt.
+Die Slash-Commands im Überblick:
+
+- `/item` zeigt Einträge aus der Tabelle `items` an. Über die optionale Eingabe `name` lässt sich nach einer Teilzeichenfolge filtern. Es werden ausschließlich freigegebene (`approved`) Items angezeigt.
+- `/itemprice` sucht nach einem freigegebenen Item und zeigt dazu verknüpfte Auktionen aus `item_market_links` inklusive Preisangaben an.
 
 > Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
 
