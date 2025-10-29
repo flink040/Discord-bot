@@ -1,6 +1,7 @@
 import {
-  MessageFlags,
+  DiscordAPIError,
   PermissionFlagsBits,
+  RESTJSONErrorCodes,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
   type GuildMember,
@@ -25,16 +26,41 @@ function normalize(str: string) {
   return str.normalize('NFKC').toLowerCase();
 }
 
-async function updateNickname(member: GuildMember, nickname: string, allowNicknameChange: boolean): Promise<boolean> {
-  if (!allowNicknameChange) return false;
-  if (!member.manageable) return false;
-  if (member.displayName === nickname) return false;
+type NicknameUpdateResult =
+  | { status: 'updated' }
+  | { status: 'unchanged' }
+  | { status: 'missing-bot-permission' }
+  | { status: 'unmanageable' }
+  | { status: 'error'; error: unknown };
+
+async function updateNickname(
+  member: GuildMember,
+  nickname: string,
+  allowNicknameChange: boolean,
+): Promise<NicknameUpdateResult> {
+  if (!allowNicknameChange) {
+    return { status: 'missing-bot-permission' };
+  }
+
+  if (!member.manageable) {
+    return { status: 'unmanageable' };
+  }
+
+  const currentNickname = member.nickname;
+  if (currentNickname === nickname) {
+    return { status: 'unchanged' };
+  }
+
   try {
     await member.setNickname(nickname, 'verify-all sync');
-    return true;
+    return { status: 'updated' };
   } catch (err) {
+    if (err instanceof DiscordAPIError && err.code === RESTJSONErrorCodes.MissingPermissions) {
+      return { status: 'unmanageable' };
+    }
+
     console.warn(`[verify-all] Failed to set nickname for ${member.id}:`, err);
-    return false;
+    return { status: 'error', error: err };
   }
 }
 
@@ -99,6 +125,8 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   let renamed = 0;
   let roleAssigned = 0;
   let notFound = 0;
+  const nicknameUnmanageable: string[] = [];
+  const nicknameFailed: string[] = [];
 
   for (const row of users ?? []) {
     const discordId = row.discord_id;
@@ -121,9 +149,19 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
     matched += 1;
 
-    const didRename = await updateNickname(member, nickname, canManageNicknames);
-    if (didRename) {
-      renamed += 1;
+    const nicknameResult = await updateNickname(member, nickname, canManageNicknames);
+    switch (nicknameResult.status) {
+      case 'updated':
+        renamed += 1;
+        break;
+      case 'unmanageable':
+        nicknameUnmanageable.push(`${member.displayName} (${member.id})`);
+        break;
+      case 'error':
+        nicknameFailed.push(`${member.displayName} (${member.id})`);
+        break;
+      default:
+        break;
     }
 
     const didAssignRole = await ensureRole(member, role.id);
@@ -145,6 +183,24 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
   if (!canManageNicknames) {
     summaryLines.push('Hinweis: Mir fehlt die Berechtigung **Spitznamen verwalten**.');
+  }
+
+  if (nicknameUnmanageable.length > 0) {
+    const preview = nicknameUnmanageable.slice(0, 5).join(', ');
+    const suffix = nicknameUnmanageable.length > 5 ? ', …' : '';
+    summaryLines.push(
+      `Nicknames konnten nicht geändert werden (Mitglieder mit höherer Rollenposition): ${
+        nicknameUnmanageable.length
+      }\n→ ${preview}${suffix}`,
+    );
+  }
+
+  if (nicknameFailed.length > 0) {
+    const preview = nicknameFailed.slice(0, 5).join(', ');
+    const suffix = nicknameFailed.length > 5 ? ', …' : '';
+    summaryLines.push(
+      `Nicknames konnten aufgrund unerwarteter Fehler nicht geändert werden: ${nicknameFailed.length}\n→ ${preview}${suffix}`,
+    );
   }
 
   await interaction.editReply(summaryLines.join('\n'));
