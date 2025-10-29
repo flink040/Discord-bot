@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { registerFont } from 'canvas';
 
 const defaultFontconfigDir = '/etc/fonts';
 const fallbackFontconfigDir = path.resolve(process.cwd(), 'config/fontconfig');
@@ -27,6 +28,12 @@ process.env.FONTCONFIG_PATH = fontconfigDir;
 
 if (!process.env.FONTCONFIG_FILE) {
   process.env.FONTCONFIG_FILE = fontsConfPath;
+}
+
+const fontPath = path.resolve(process.cwd(), 'assets/fonts/DejaVuSans.ttf');
+
+if (fs.existsSync(fontPath)) {
+  registerFont(fontPath, { family: 'DejaVu Sans' });
 }
 
 const { ChartJSNodeCanvas } = require('chartjs-node-canvas') as typeof import('chartjs-node-canvas');
