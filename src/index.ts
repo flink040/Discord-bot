@@ -4,6 +4,7 @@ import { Client, Events, GatewayIntentBits, Interaction, MessageFlags } from 'di
 import { startHttpServer } from './http';
 import { loadCommands } from './commands/_loader';
 import { registerCommands, registerOnGuildJoin, type RegisterMode } from './registry';
+import { isUserVerified } from './utils/verification';
 
 const token = process.env.DISCORD_TOKEN;
 const appId = process.env.DISCORD_APP_ID;
@@ -109,6 +110,30 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
         .catch(() => {});
       return;
     }
+
+    if (interaction.commandName !== 'verify') {
+      if (!interaction.inGuild() || !interaction.guild) {
+        await interaction
+          .reply({
+            content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Führe den Befehl auf dem Server aus und nutze `/verify` zur Verifizierung.',
+            flags: MessageFlags.Ephemeral,
+          })
+          .catch(() => {});
+        return;
+      }
+
+      const verified = await isUserVerified(interaction.guild, interaction.user.id);
+      if (!verified) {
+        await interaction
+          .reply({
+            content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Nutze `/verify`, um die Verifizierung abzuschließen.',
+            flags: MessageFlags.Ephemeral,
+          })
+          .catch(() => {});
+        return;
+      }
+    }
+
     try {
       await cmd.execute(interaction);
     } catch (err) {
