@@ -290,15 +290,15 @@ function toFontString(font: AxisLabelFont): string {
 
 const chartAxisLabelsPlugin: Plugin<'line', AxisLabelsPluginOptions> = {
   id: 'customAxisLabels',
-  afterDraw: (chart, _args, opts) => {
-    if (!opts) return;
+  afterDraw(chart, _args, opts) {
+    const options = opts ?? {};
     const { ctx, chartArea } = chart;
     if (!chartArea) return;
 
     ctx.save();
 
-    if (opts.x) {
-      const { text, color, font, padding = 12 } = opts.x;
+    if (options.x) {
+      const { text, color, font, padding = 12 } = options.x;
       ctx.font = toFontString(font);
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
@@ -306,8 +306,8 @@ const chartAxisLabelsPlugin: Plugin<'line', AxisLabelsPluginOptions> = {
       ctx.fillText(text, (chartArea.left + chartArea.right) / 2, chartArea.bottom + padding);
     }
 
-    if (opts.y) {
-      const { text, color, font, padding = 12 } = opts.y;
+    if (options.y) {
+      const { text, color, font, padding = 12 } = options.y;
       ctx.font = toFontString(font);
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
