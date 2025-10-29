@@ -1,14 +1,20 @@
 import {
   SlashCommandBuilder,
   EmbedBuilder,
+  AttachmentBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   type ChatInputCommandInteraction,
   type MessageComponentInteraction,
+  type MessageEditAttachmentData,
 } from 'discord.js';
+import { Chart, registerables, type ChartConfiguration } from 'chart.js';
+import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
+
+Chart.register(...registerables);
 
 const currencyFormatter = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
 
@@ -153,8 +159,6 @@ type BidSample = {
   collectedAt: Date;
 };
 
-const sparklineBars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
-
 function extractBids(rows: SnapshotRow[]): BidSample[] {
   return rows
     .map(row => {
@@ -177,36 +181,6 @@ function averageAmount(samples: BidSample[], days?: number): number | null {
   if (relevant.length === 0) return null;
   const sum = relevant.reduce((acc, sample) => acc + sample.amount, 0);
   return sum / relevant.length;
-}
-
-function buildSparkline(samples: BidSample[], maxPoints = 20): string | null {
-  if (samples.length < 2) return null;
-
-  const values = samples.map(sample => sample.amount);
-  const points = Math.min(maxPoints, values.length);
-
-  const selected = Array.from({ length: points }, (_, index) => {
-    const sourceIndex = Math.round((values.length - 1) * (points === 1 ? 0 : index / (points - 1)));
-    return values[sourceIndex];
-  });
-
-  const min = Math.min(...selected);
-  const max = Math.max(...selected);
-
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-
-  if (min === max) {
-    return sparklineBars[sparklineBars.length - 1].repeat(points);
-  }
-
-  const scale = sparklineBars.length - 1;
-  return selected
-    .map(value => {
-      const normalized = (value - min) / (max - min);
-      const barIndex = Math.min(scale, Math.max(0, Math.round(normalized * scale)));
-      return sparklineBars[barIndex];
-    })
-    .join('');
 }
 
 function formatDateRange(samples: BidSample[]): string | null {
@@ -242,6 +216,92 @@ function filterSamplesByView(samples: BidSample[], view: ViewMode): BidSample[] 
   return samples.filter(sample => sample.collectedAt.getTime() >= cutoff);
 }
 
+const chartWidth = 800;
+const chartHeight = 400;
+const chartBackground = '#ffffff';
+const chartBorderColor = '#3498db';
+const chartLabelFormatter = new Intl.DateTimeFormat('de-DE', {
+  day: '2-digit',
+  month: '2-digit',
+});
+
+const chartJSNodeCanvas = new ChartJSNodeCanvas({
+  width: chartWidth,
+  height: chartHeight,
+  backgroundColour: chartBackground,
+});
+
+async function renderPriceChart(samples: BidSample[], currency: string | null): Promise<Buffer | null> {
+  if (samples.length < 2) return null;
+
+  const labels = samples.map(sample => chartLabelFormatter.format(sample.collectedAt));
+  const data = samples.map(sample => sample.amount);
+  const suffix = displayCurrency(currency);
+  const datasetLabel = `Preis${suffix ? ` (${suffix})` : ''}`;
+
+  const config: ChartConfiguration<'line'> = {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: datasetLabel,
+          data,
+          borderColor: chartBorderColor,
+          backgroundColor: chartBorderColor,
+          borderWidth: 3,
+          tension: 0.2,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: false,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        title: { display: false },
+        tooltip: { enabled: false },
+      },
+      scales: {
+        x: {
+          ticks: {
+            color: '#4b5563',
+            maxRotation: 0,
+            autoSkip: true,
+            autoSkipPadding: 10,
+          },
+          grid: {
+            color: 'rgba(0,0,0,0.1)',
+          },
+        },
+        y: {
+          ticks: {
+            color: '#4b5563',
+            callback: value => currencyFormatter.format(Number(value)),
+          },
+          grid: {
+            color: 'rgba(0,0,0,0.1)',
+          },
+        },
+      },
+      elements: {
+        point: {
+          backgroundColor: chartBorderColor,
+        },
+        line: {
+          borderJoinStyle: 'round',
+          borderCapStyle: 'round',
+        },
+      },
+    },
+  } satisfies ChartConfiguration<'line'>;
+
+  return chartJSNodeCanvas.renderToBuffer(config, 'image/png');
+}
+
 type PriceSummary = {
   lastBid: number | null;
   avg7: number | null;
@@ -263,45 +323,47 @@ function summarizeBids(samples: BidSample[]): PriceSummary {
 function buildPriceEmbed(options: {
   itemName: string;
   currency: string | null;
-  samples: BidSample[];
   summary: PriceSummary;
   view: ViewMode;
+  viewSamples: BidSample[];
+  allSamples: BidSample[];
+  hasChart: boolean;
 }): EmbedBuilder {
-  const { itemName, currency, samples, summary, view } = options;
-  const viewSamples = filterSamplesByView(samples, view);
-  const sparkline = buildSparkline(viewSamples);
+  const { itemName, currency, summary, view, viewSamples, allSamples, hasChart } = options;
   const viewLabel = viewLabels[view];
   const viewRange = formatDateRange(viewSamples);
-  const overallRange = formatDateRange(samples);
+  const overallRange = formatDateRange(allSamples);
 
-  let description = `**Trend (${viewLabel})**\n`;
-  if (sparkline) {
-    description += `\`\`\`\n${sparkline}\n\`\`\``;
-  } else if (viewSamples.length === 1) {
-    description += 'Nur ein Datenpunkt verfügbar.';
-  } else {
-    description += 'Keine Daten verfügbar.';
+  const descriptionLines = [`Zeitraum (${viewLabel}): ${viewRange ?? '–'}`];
+  if (!hasChart) {
+    if (viewSamples.length >= 2) {
+      descriptionLines.push('Diagramm konnte nicht erzeugt werden.');
+    } else if (viewSamples.length === 1) {
+      descriptionLines.push('Nur ein Datenpunkt verfügbar.');
+    } else {
+      descriptionLines.push('Keine Daten verfügbar.');
+    }
   }
 
-  const footerParts: string[] = [];
-  footerParts.push(`Zeitraum (${viewLabel}): ${viewRange ?? '–'}`);
-  if (view !== 'all' && overallRange) {
-    footerParts.push(`Gesamtzeitraum: ${overallRange}`);
-  }
-  const footerText = footerParts.join(' • ');
+  const footerText = overallRange ? `Gesamtzeitraum: ${overallRange}` : undefined;
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(0x2ecc71)
     .setTitle(`Preisdaten für ${itemName}`)
-    .setDescription(description)
+    .setDescription(descriptionLines.join('\n'))
     .addFields(
       { name: 'Letztes Gebot', value: formatPriceValue(summary.lastBid, currency), inline: true },
       { name: 'Durchschnitt 7 Tage', value: formatPriceValue(summary.avg7, currency), inline: true },
       { name: 'Durchschnitt 30 Tage', value: formatPriceValue(summary.avg30, currency), inline: true },
       { name: 'Durchschnitt gesamt', value: formatPriceValue(summary.avgAll, currency), inline: true },
       { name: 'Anzahl Datensätze', value: currencyFormatter.format(summary.count), inline: true },
-    )
-    .setFooter({ text: footerText });
+    );
+
+  if (footerText) {
+    embed.setFooter({ text: footerText });
+  }
+
+  return embed;
 }
 
 function buildComponents(itemId: string, samples: BidSample[], activeView: ViewMode) {
@@ -317,6 +379,59 @@ function buildComponents(itemId: string, samples: BidSample[], activeView: ViewM
     );
   });
   return [row];
+}
+
+const chartFileName = 'price-chart.png';
+
+async function buildViewPayload(options: {
+  itemId: string;
+  itemName: string;
+  currency: string | null;
+  allSamples: BidSample[];
+  summary: PriceSummary;
+  view: ViewMode;
+}) {
+  const { itemId, itemName, currency, allSamples, summary, view } = options;
+  const viewSamples = filterSamplesByView(allSamples, view);
+  const chartBuffer = await renderPriceChart(viewSamples, currency);
+  const hasChart = Boolean(chartBuffer);
+
+  const embed = buildPriceEmbed({
+    itemName,
+    currency,
+    summary,
+    view,
+    viewSamples,
+    allSamples,
+    hasChart,
+  });
+
+  const attachments = chartBuffer
+    ? [new AttachmentBuilder(chartBuffer, { name: chartFileName })]
+    : undefined;
+
+  if (attachments) {
+    embed.setImage(`attachment://${chartFileName}`);
+  }
+
+  const components = buildComponents(itemId, allSamples, view);
+
+  const payload = {
+    embeds: [embed],
+    components,
+    attachments: [] as MessageEditAttachmentData[],
+  } as {
+    embeds: EmbedBuilder[];
+    components: ReturnType<typeof buildComponents>;
+    files?: AttachmentBuilder[];
+    attachments: MessageEditAttachmentData[];
+  };
+
+  if (attachments) {
+    payload.files = attachments;
+  }
+
+  return payload;
 }
 
 function resolveCurrency(links: MarketLinkRow[]): string | null {
@@ -384,16 +499,16 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     }
 
     const summary = summarizeBids(dataset.bids);
-    const embed = buildPriceEmbed({
+    const payload = await buildViewPayload({
+      itemId: item.id,
       itemName: item.name,
       currency: dataset.currency,
-      samples: dataset.bids,
+      allSamples: dataset.bids,
       summary,
       view: 'all',
     });
-    const components = buildComponents(item.id, dataset.bids, 'all');
 
-    await interaction.editReply({ embeds: [embed], components });
+    await interaction.editReply(payload);
   } catch (err) {
     console.error('[command:itemprice]', err);
     if (err instanceof Error) {
@@ -443,16 +558,16 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
     }
 
     const summary = summarizeBids(dataset.bids);
-    const embed = buildPriceEmbed({
+    const payload = await buildViewPayload({
+      itemId: item.id,
       itemName: item.name,
       currency: dataset.currency,
-      samples: dataset.bids,
+      allSamples: dataset.bids,
       summary,
       view: view as ViewMode,
     });
-    const components = buildComponents(item.id, dataset.bids, view as ViewMode);
 
-    await interaction.update({ embeds: [embed], components }).catch(() => {});
+    await interaction.update(payload).catch(() => {});
   } catch (err) {
     console.error('[component:itemprice]', err);
     if (interaction.deferred || interaction.replied) {
