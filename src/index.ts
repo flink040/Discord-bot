@@ -21,7 +21,7 @@ const server = startHttpServer(port);
 
 // Discord client with minimal intents
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
 // Load commands
