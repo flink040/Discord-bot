@@ -95,4 +95,4 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 };
 
-export default { data: data.toJSON(), execute } satisfies CommandDef;
+export default { data: data.toJSON(), execute, enabled: false } satisfies CommandDef;

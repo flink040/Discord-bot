@@ -55,7 +55,9 @@ SUPABASE_URL=https://<projekt>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
 ```
 
-Der Slash-Command `/auctions` liest aktive Auktionen aus der Tabelle `auction_listings` und stellt sie in Discord dar. Über die Optionen `status` und `limit` kannst du die Ergebnisse filtern.
+Der Slash-Command `/item` zeigt Einträge aus der Tabelle `items` an. Du kannst per Option `name` nach einer Teilzeichenfolge filtern, mit `status` (Standard: `approved`) den Freigabestatus einschränken und über `limit` bis zu fünf Ergebnisse auf einmal anzeigen.
+
+> Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
 
 ---
 
