@@ -3,14 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CommandDef } from '../types/Command';
 
-/**
- * Loads all command modules from the commands directory.
- */
+/** Loads all command modules from the commands directory. */
 export function loadCommands(): Map<string, CommandDef> {
   const commandsDir = __dirname;
   const files = fs.readdirSync(commandsDir)
-    .filter(f => f.endsWith('.js') || f.endsWith('.ts'))
-    .filter(f => !f.startsWith('_')); // ignore this loader
+    .filter(f => (f.endsWith('.js') || f.endsWith('.ts')) && !f.startsWith('_'));
 
   const map = new Map<string, CommandDef>();
   for (const file of files) {
@@ -27,7 +24,6 @@ export function loadCommands(): Map<string, CommandDef> {
   return map;
 }
 
-/** Returns array of JSON bodies for registration */
 export function commandsJson(commands: Map<string, CommandDef>) {
   return Array.from(commands.values()).map(c => c.data);
 }

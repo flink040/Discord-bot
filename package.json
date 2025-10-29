@@ -1,7 +1,7 @@
 
 {
-  "name": "discord-bot-railway-starter-ts",
-  "version": "1.0.0",
+  "name": "discord-bot-railway-starter-ts-autoreg",
+  "version": "1.1.0",
   "private": true,
   "engines": { "node": ">=20" },
   "type": "commonjs",
@@ -9,9 +9,7 @@
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
     "build": "tsc -p tsconfig.json",
     "prestart": "npm run build",
-    "start": "node dist/index.js",
-    "register:dev": "ts-node src/register-commands.ts dev",
-    "register:global": "ts-node src/register-commands.ts global"
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3",

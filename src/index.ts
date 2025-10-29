@@ -3,17 +3,20 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, Events, Interaction } from 'discord.js';
 import { startHttpServer } from './http';
 import { loadCommands } from './commands/_loader';
+import { registerCommands, registerOnGuildJoin, type RegisterMode } from './registry';
 
 const token = process.env.DISCORD_TOKEN;
-if (!token) {
-  console.error('[startup] DISCORD_TOKEN is missing');
+const appId = process.env.DISCORD_APP_ID;
+if (!token || !appId) {
+  console.error('[startup] Missing DISCORD_TOKEN or DISCORD_APP_ID');
   process.exit(1);
 }
 
 const port = Number(process.env.PORT ?? 3000);
 const isDev = (process.env.NODE_ENV ?? 'production') !== 'production';
+const registerMode: RegisterMode = (process.env.REGISTER_MODE === 'global') ? 'global' : 'guild';
 
-// Start health server first so Railway sees us as healthy quickly
+// Start health server first
 const server = startHttpServer(port);
 
 // Discord client with minimal intents
@@ -26,8 +29,23 @@ const commands = loadCommands();
 console.log(`[commands] Loaded: ${Array.from(commands.keys()).join(', ') || '(none)'}`);
 
 // Ready
-client.once(Events.ClientReady, (c) => {
+client.once(Events.ClientReady, async (c) => {
   console.log(`[discord] Logged in as ${c.user.tag}`);
+  try {
+    await registerCommands({ client, token: token!, appId: appId!, mode: registerMode });
+  } catch (err) {
+    console.error('[register] Initial registration failed:', err);
+  }
+});
+
+// Register when bot joins a new guild (only relevant in guild mode)
+client.on(Events.GuildCreate, async (guild) => {
+  if (registerMode !== 'guild') return;
+  try {
+    await registerOnGuildJoin({ token: token!, appId: appId!, guildId: guild.id });
+  } catch (err) {
+    console.error(`[register] Guild join registration failed (${guild.id}):`, err);
+  }
 });
 
 // Handle interactions
@@ -51,7 +69,7 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
 });
 
 // Login
-client.login(token).catch((err) => {
+client.login(token!).catch((err) => {
   console.error('[discord] Login failed:', err);
   process.exit(1);
 });
@@ -73,4 +91,5 @@ process.on('SIGTERM', shutdown);
 
 if (isDev) {
   console.log('[env] Development mode enabled');
+  console.log(`[env] REGISTER_MODE=${registerMode}`);
 }
