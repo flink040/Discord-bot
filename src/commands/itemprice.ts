@@ -239,7 +239,7 @@ const chartAverageAccent = '#f97316';
 const chartGridColor = 'rgba(148, 163, 184, 0.18)';
 const chartAxisColor = '#e2e8f0';
 const chartTitleColor = '#f8fafc';
-const chartAxisFontFamily = 'Inter, "Segoe UI", sans-serif';
+const chartAxisFontFamily = '"DejaVu Sans", sans-serif';
 const chartLabelFormatter = new Intl.DateTimeFormat('de-DE', {
   day: '2-digit',
   month: '2-digit',
