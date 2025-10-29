@@ -5,11 +5,12 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
   type ChatInputCommandInteraction,
   type MessageComponentInteraction,
   type MessageEditAttachmentData,
 } from 'discord.js';
-import { Chart, registerables, type ChartConfiguration } from 'chart.js';
+import { Chart, registerables, type ChartConfiguration, type Plugin } from 'chart.js';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
@@ -26,6 +27,7 @@ function displayCurrency(currency: string | null): string | null {
 const COMMAND_ID = 'itemprice';
 
 type ViewMode = '7d' | '30d' | 'all';
+type DisplayMode = 'raw' | 'avg' | 'both';
 
 type ItemRow = {
   id: string;
@@ -209,6 +211,12 @@ const viewLabels: Record<ViewMode, string> = {
   all: 'Gesamt',
 };
 
+const displayModeLabels: Record<DisplayMode, string> = {
+  raw: 'Rohdaten',
+  avg: 'Durchschnitt',
+  both: 'Rohdaten + Durchschnitt',
+};
+
 function filterSamplesByView(samples: BidSample[], view: ViewMode): BidSample[] {
   if (view === 'all') return samples;
   const days = view === '7d' ? 7 : 30;
@@ -216,10 +224,14 @@ function filterSamplesByView(samples: BidSample[], view: ViewMode): BidSample[] 
   return samples.filter(sample => sample.collectedAt.getTime() >= cutoff);
 }
 
-const chartWidth = 800;
-const chartHeight = 400;
-const chartBackground = '#ffffff';
-const chartBorderColor = '#3498db';
+const chartWidth = 960;
+const chartHeight = 480;
+const chartBackground = '#0b1120';
+const chartAccent = '#38bdf8';
+const chartAverageAccent = '#f97316';
+const chartGridColor = 'rgba(148, 163, 184, 0.18)';
+const chartAxisColor = '#e2e8f0';
+const chartTitleColor = '#f8fafc';
 const chartLabelFormatter = new Intl.DateTimeFormat('de-DE', {
   day: '2-digit',
   month: '2-digit',
@@ -231,65 +243,198 @@ const chartJSNodeCanvas = new ChartJSNodeCanvas({
   backgroundColour: chartBackground,
 });
 
-async function renderPriceChart(samples: BidSample[], currency: string | null): Promise<Buffer | null> {
+const chartBackgroundPlugin: Plugin<'line'> = {
+  id: 'gradient-background',
+  beforeDraw: (chart: Chart) => {
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return;
+    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+    gradient.addColorStop(0, '#0b1120');
+    gradient.addColorStop(1, '#172554');
+    ctx.save();
+    ctx.fillStyle = gradient;
+    ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
+    ctx.restore();
+  },
+};
+
+const viewAverageWindowDays: Record<ViewMode, number> = {
+  '7d': 7,
+  '30d': 30,
+  all: 30,
+};
+
+function computeMovingAverage(samples: BidSample[], windowDays: number): number[] {
+  if (samples.length === 0) return [];
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  const result: number[] = [];
+  let windowStart = 0;
+  let windowSum = 0;
+
+  for (let index = 0; index < samples.length; index += 1) {
+    const current = samples[index];
+    windowSum += current.amount;
+
+    while (
+      windowStart < index &&
+      current.collectedAt.getTime() - samples[windowStart].collectedAt.getTime() > windowMs
+    ) {
+      windowSum -= samples[windowStart].amount;
+      windowStart += 1;
+    }
+
+    const divisor = index - windowStart + 1;
+    result.push(divisor > 0 ? windowSum / divisor : current.amount);
+  }
+
+  return result;
+}
+
+async function renderPriceChart(options: {
+  samples: BidSample[];
+  currency: string | null;
+  view: ViewMode;
+  mode: DisplayMode;
+}): Promise<Buffer | null> {
+  const { samples, currency, view, mode } = options;
   if (samples.length < 2) return null;
 
   const labels = samples.map(sample => chartLabelFormatter.format(sample.collectedAt));
-  const data = samples.map(sample => sample.amount);
   const suffix = displayCurrency(currency);
   const datasetLabel = `Preis${suffix ? ` (${suffix})` : ''}`;
+
+  const datasets: ChartConfiguration<'line'>['data']['datasets'] = [];
+
+  if (mode === 'raw' || mode === 'both') {
+    datasets.push({
+      label: datasetLabel,
+      data: samples.map(sample => sample.amount),
+      borderColor: chartAccent,
+      backgroundColor: (context) => {
+        const ctx = context.chart.ctx;
+        const gradient = ctx.createLinearGradient(0, chartHeight, 0, 0);
+        gradient.addColorStop(0, 'rgba(56, 189, 248, 0.05)');
+        gradient.addColorStop(1, 'rgba(56, 189, 248, 0.35)');
+        return gradient;
+      },
+      borderWidth: 3,
+      tension: 0.3,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      pointBackgroundColor: '#ffffff',
+      pointBorderWidth: 1,
+      fill: true,
+    });
+  }
+
+  if (mode === 'avg' || mode === 'both') {
+    const averageValues = computeMovingAverage(samples, viewAverageWindowDays[view]);
+    if (averageValues.length >= 2) {
+      datasets.push({
+        label: `Gleitender Durchschnitt (${viewAverageWindowDays[view]} Tage)`,
+        data: averageValues,
+        borderColor: chartAverageAccent,
+        backgroundColor: 'rgba(249, 115, 22, 0.2)',
+        borderDash: [6, 6],
+        borderWidth: 2,
+        tension: 0.25,
+        pointRadius: 0,
+        fill: false,
+      });
+    }
+  }
+
+  if (datasets.length === 0) {
+    return null;
+  }
 
   const config: ChartConfiguration<'line'> = {
     type: 'line',
     data: {
       labels,
-      datasets: [
-        {
-          label: datasetLabel,
-          data,
-          borderColor: chartBorderColor,
-          backgroundColor: chartBorderColor,
-          borderWidth: 3,
-          tension: 0.2,
-          pointRadius: 3,
-          pointHoverRadius: 5,
-          fill: false,
-        },
-      ],
+      datasets,
     },
     options: {
       responsive: false,
       maintainAspectRatio: false,
+      layout: {
+        padding: 24,
+      },
       plugins: {
-        legend: { display: false },
-        title: { display: false },
+        legend: {
+          display: datasets.length > 1,
+          labels: {
+            color: chartAxisColor,
+            font: {
+              family: 'Inter, "Segoe UI", sans-serif',
+              size: 13,
+              weight: 600,
+            },
+          },
+        },
+        title: {
+          display: true,
+          text: 'Preisverlauf',
+          color: chartTitleColor,
+          font: {
+            family: 'Inter, "Segoe UI", sans-serif',
+            size: 18,
+            weight: 600,
+          },
+        },
         tooltip: { enabled: false },
       },
       scales: {
         x: {
           ticks: {
-            color: '#4b5563',
+            color: chartAxisColor,
             maxRotation: 0,
             autoSkip: true,
-            autoSkipPadding: 10,
+            autoSkipPadding: 14,
+            font: {
+              family: 'Inter, "Segoe UI", sans-serif',
+            },
           },
           grid: {
-            color: 'rgba(0,0,0,0.1)',
+            color: chartGridColor,
+          },
+          title: {
+            display: true,
+            text: 'Datum',
+            color: chartAxisColor,
+            font: {
+              family: 'Inter, "Segoe UI", sans-serif',
+              size: 14,
+              weight: 500,
+            },
           },
         },
         y: {
           ticks: {
-            color: '#4b5563',
-            callback: value => currencyFormatter.format(Number(value)),
+            color: chartAxisColor,
+            callback: value => `${currencyFormatter.format(Number(value))}${suffix ? ` ${suffix}` : ''}`,
+            font: {
+              family: 'Inter, "Segoe UI", sans-serif',
+            },
           },
           grid: {
-            color: 'rgba(0,0,0,0.1)',
+            color: chartGridColor,
+          },
+          title: {
+            display: true,
+            text: `Preis${suffix ? ` (${suffix})` : ''}`,
+            color: chartAxisColor,
+            font: {
+              family: 'Inter, "Segoe UI", sans-serif',
+              size: 14,
+              weight: 500,
+            },
           },
         },
       },
       elements: {
         point: {
-          backgroundColor: chartBorderColor,
+          backgroundColor: chartAccent,
         },
         line: {
           borderJoinStyle: 'round',
@@ -297,6 +442,7 @@ async function renderPriceChart(samples: BidSample[], currency: string | null): 
         },
       },
     },
+    plugins: [chartBackgroundPlugin],
   } satisfies ChartConfiguration<'line'>;
 
   return chartJSNodeCanvas.renderToBuffer(config, 'image/png');
@@ -325,16 +471,20 @@ function buildPriceEmbed(options: {
   currency: string | null;
   summary: PriceSummary;
   view: ViewMode;
+  mode: DisplayMode;
   viewSamples: BidSample[];
   allSamples: BidSample[];
   hasChart: boolean;
 }): EmbedBuilder {
-  const { itemName, currency, summary, view, viewSamples, allSamples, hasChart } = options;
+  const { itemName, currency, summary, view, mode, viewSamples, allSamples, hasChart } = options;
   const viewLabel = viewLabels[view];
   const viewRange = formatDateRange(viewSamples);
   const overallRange = formatDateRange(allSamples);
 
-  const descriptionLines = [`Zeitraum (${viewLabel}): ${viewRange ?? '–'}`];
+  const descriptionLines = [
+    `Zeitraum (${viewLabel}): ${viewRange ?? '–'}`,
+    `Darstellung: ${displayModeLabels[mode]}`,
+  ];
   if (!hasChart) {
     if (viewSamples.length >= 2) {
       descriptionLines.push('Diagramm konnte nicht erzeugt werden.');
@@ -348,7 +498,7 @@ function buildPriceEmbed(options: {
   const footerText = overallRange ? `Gesamtzeitraum: ${overallRange}` : undefined;
 
   const embed = new EmbedBuilder()
-    .setColor(0x2ecc71)
+    .setColor(0x38bdf8)
     .setTitle(`Preisdaten für ${itemName}`)
     .setDescription(descriptionLines.join('\n'))
     .addFields(
@@ -366,19 +516,45 @@ function buildPriceEmbed(options: {
   return embed;
 }
 
-function buildComponents(itemId: string, samples: BidSample[], activeView: ViewMode) {
-  const row = new ActionRowBuilder<ButtonBuilder>();
-  (['7d', '30d', 'all'] as ViewMode[]).forEach(view => {
-    const viewSamples = filterSamplesByView(samples, view);
-    row.addComponents(
+const displayModes: { mode: DisplayMode; label: string; emoji: string }[] = [
+  { mode: 'raw', label: 'Gebote', emoji: '📈' },
+  { mode: 'avg', label: 'Durchschnitt', emoji: '📊' },
+  { mode: 'both', label: 'Kombiniert', emoji: '🧮' },
+];
+
+function buildComponents(itemId: string, samples: BidSample[], state: { view: ViewMode; mode: DisplayMode }) {
+  const viewRow = new ActionRowBuilder<StringSelectMenuBuilder>();
+  const viewMenu = new StringSelectMenuBuilder()
+    .setCustomId(`${COMMAND_ID}:view:${itemId}:${state.mode}`)
+    .setPlaceholder('Zeitraum auswählen')
+    .addOptions(
+      (['7d', '30d', 'all'] as ViewMode[]).map(view => ({
+        label: viewLabels[view],
+        value: view,
+        default: state.view === view,
+        description:
+          view === 'all'
+            ? 'Gesamter verfügbarer Zeitraum'
+            : `Preise der letzten ${viewLabels[view]}`,
+      }))
+    );
+  viewRow.addComponents(viewMenu);
+
+  const modeRow = new ActionRowBuilder<ButtonBuilder>();
+  const activeViewSamples = filterSamplesByView(samples, state.view);
+  const hasAverageData = activeViewSamples.length >= 2;
+  displayModes.forEach(({ mode, label, emoji }) => {
+    const disable = mode !== 'raw' && !hasAverageData;
+    modeRow.addComponents(
       new ButtonBuilder()
-        .setCustomId(`${COMMAND_ID}:${itemId}:${view}`)
-        .setLabel(viewLabels[view])
-        .setStyle(view === activeView ? ButtonStyle.Primary : ButtonStyle.Secondary)
-        .setDisabled(viewSamples.length === 0)
+        .setCustomId(`${COMMAND_ID}:mode:${itemId}:${state.view}:${mode}`)
+        .setLabel(`${emoji} ${label}`)
+        .setStyle(mode === state.mode ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setDisabled(disable)
     );
   });
-  return [row];
+
+  return [viewRow, modeRow] as Array<ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>>;
 }
 
 const chartFileName = 'price-chart.png';
@@ -389,18 +565,28 @@ async function buildViewPayload(options: {
   currency: string | null;
   allSamples: BidSample[];
   summary: PriceSummary;
-  view: ViewMode;
+  state: { view: ViewMode; mode: DisplayMode };
 }) {
-  const { itemId, itemName, currency, allSamples, summary, view } = options;
-  const viewSamples = filterSamplesByView(allSamples, view);
-  const chartBuffer = await renderPriceChart(viewSamples, currency);
+  const { itemId, itemName, currency, allSamples, summary, state } = options;
+  const viewSamples = filterSamplesByView(allSamples, state.view);
+  const hasAverageData = viewSamples.length >= 2;
+  const resolvedMode: DisplayMode = state.mode === 'raw' || hasAverageData ? state.mode : 'raw';
+  const resolvedState = { view: state.view, mode: resolvedMode };
+
+  const chartBuffer = await renderPriceChart({
+    samples: viewSamples,
+    currency,
+    view: resolvedState.view,
+    mode: resolvedState.mode,
+  });
   const hasChart = Boolean(chartBuffer);
 
   const embed = buildPriceEmbed({
     itemName,
     currency,
     summary,
-    view,
+    view: resolvedState.view,
+    mode: resolvedState.mode,
     viewSamples,
     allSamples,
     hasChart,
@@ -414,7 +600,7 @@ async function buildViewPayload(options: {
     embed.setImage(`attachment://${chartFileName}`);
   }
 
-  const components = buildComponents(itemId, allSamples, view);
+  const components = buildComponents(itemId, allSamples, resolvedState);
 
   const payload = {
     embeds: [embed],
@@ -499,13 +685,14 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     }
 
     const summary = summarizeBids(dataset.bids);
+    const initialMode: DisplayMode = dataset.bids.length >= 2 ? 'both' : 'raw';
     const payload = await buildViewPayload({
       itemId: item.id,
       itemName: item.name,
       currency: dataset.currency,
       allSamples: dataset.bids,
       summary,
-      view: 'all',
+      state: { view: 'all', mode: initialMode },
     });
 
     await interaction.editReply(payload);
@@ -520,15 +707,51 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 };
 
 export const handleComponent = async (interaction: MessageComponentInteraction) => {
-  if (!interaction.isButton()) {
+  let itemId: string | undefined;
+  let state: { view: ViewMode; mode: DisplayMode } | undefined;
+
+  if (interaction.isStringSelectMenu()) {
+    const [, action, maybeItemId, maybeMode] = interaction.customId.split(':');
+    const selectedView = interaction.values[0];
+    if (
+      action !== 'view' ||
+      !maybeItemId ||
+      !maybeMode ||
+      (maybeMode !== 'raw' && maybeMode !== 'avg' && maybeMode !== 'both') ||
+      (selectedView !== '7d' && selectedView !== '30d' && selectedView !== 'all')
+    ) {
+      if (!interaction.replied) {
+        await interaction.reply({ content: 'Unbekannte Aktion.', ephemeral: true }).catch(() => {});
+      }
+      return;
+    }
+    itemId = maybeItemId;
+    state = { view: selectedView, mode: maybeMode };
+  } else if (interaction.isButton()) {
+    const [, action, maybeItemId, maybeView, maybeMode] = interaction.customId.split(':');
+    if (
+      action !== 'mode' ||
+      !maybeItemId ||
+      !maybeView ||
+      !maybeMode ||
+      (maybeView !== '7d' && maybeView !== '30d' && maybeView !== 'all') ||
+      (maybeMode !== 'raw' && maybeMode !== 'avg' && maybeMode !== 'both')
+    ) {
+      if (!interaction.replied) {
+        await interaction.reply({ content: 'Unbekannte Aktion.', ephemeral: true }).catch(() => {});
+      }
+      return;
+    }
+    itemId = maybeItemId;
+    state = { view: maybeView, mode: maybeMode };
+  } else {
     if (!interaction.replied) {
-      await interaction.reply({ content: 'Dieser Interaktionstyp wird nicht unterstützt.', ephemeral: true });
+      await interaction.reply({ content: 'Dieser Interaktionstyp wird nicht unterstützt.', ephemeral: true }).catch(() => {});
     }
     return;
   }
 
-  const [, itemId, view] = interaction.customId.split(':');
-  if (!itemId || (view !== '7d' && view !== '30d' && view !== 'all')) {
+  if (!itemId || !state) {
     if (!interaction.replied) {
       await interaction.reply({ content: 'Unbekannte Aktion.', ephemeral: true }).catch(() => {});
     }
@@ -564,14 +787,16 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
       currency: dataset.currency,
       allSamples: dataset.bids,
       summary,
-      view: view as ViewMode,
+      state,
     });
 
     await interaction.update(payload).catch(() => {});
   } catch (err) {
     console.error('[component:itemprice]', err);
     if (interaction.deferred || interaction.replied) {
-      await interaction.followUp({ content: 'Fehler beim Aktualisieren der Preisdaten.', ephemeral: true }).catch(() => {});
+      await interaction
+        .followUp({ content: 'Fehler beim Aktualisieren der Preisdaten.', ephemeral: true })
+        .catch(() => {});
     } else {
       await interaction.reply({ content: 'Fehler beim Aktualisieren der Preisdaten.', ephemeral: true }).catch(() => {});
     }
