@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, time, type ChatInputCommandInteraction } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder, time, type ChatInputCommandInteraction } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
@@ -53,7 +53,7 @@ async function fetchListings(status: string, limit: number): Promise<ListingRow[
 }
 
 export const execute = async (interaction: ChatInputCommandInteraction) => {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const status = interaction.options.getString('status') ?? 'active';
   const limit = interaction.options.getInteger('limit') ?? 5;

@@ -1,6 +1,6 @@
 
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Events, Interaction } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Interaction, MessageFlags } from 'discord.js';
 import { startHttpServer } from './http';
 import { loadCommands } from './commands/_loader';
 import { registerCommands, registerOnGuildJoin, type RegisterMode } from './registry';
@@ -104,7 +104,9 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
   if (interaction.isChatInputCommand()) {
     const cmd = commands.get(interaction.commandName);
     if (!cmd) {
-      await interaction.reply({ content: 'Unknown command.', ephemeral: true }).catch(() => {});
+      await interaction
+        .reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral })
+        .catch(() => {});
       return;
     }
     try {
@@ -115,7 +117,7 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
         await interaction.editReply('❌ An error occurred while executing this command.').catch(() => {});
       } else {
         await interaction
-          .reply({ content: '❌ An error occurred while executing this command.', ephemeral: true })
+          .reply({ content: '❌ An error occurred while executing this command.', flags: MessageFlags.Ephemeral })
           .catch(() => {});
       }
     }
@@ -135,11 +137,11 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
       console.error(`[component:${interaction.customId}]`, err);
       if (interaction.deferred || interaction.replied) {
         await interaction
-          .followUp({ content: '❌ Fehler bei der Verarbeitung der Aktion.', ephemeral: true })
+          .followUp({ content: '❌ Fehler bei der Verarbeitung der Aktion.', flags: MessageFlags.Ephemeral })
           .catch(() => {});
       } else {
         await interaction
-          .reply({ content: '❌ Fehler bei der Verarbeitung der Aktion.', ephemeral: true })
+          .reply({ content: '❌ Fehler bei der Verarbeitung der Aktion.', flags: MessageFlags.Ephemeral })
           .catch(() => {});
       }
     }
