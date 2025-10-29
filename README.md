@@ -25,6 +25,11 @@ No extra "register" step needed.
 | `REGISTER_MODE` | ➖ | `guild` (default) or `global` |
 | `PORT` | ➖ | Railway injects this. Defaults to 3000 locally. |
 | `NODE_ENV` | ➖ | `development` or `production` |
+| `SUPABASE_URL` | ✅ | URL deines Supabase-Projekts (z. B. `https://xyz.supabase.co`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅* | Service-Role-Key für serverseitige Zugriffe. Alternativ `SUPABASE_ANON_KEY` setzen, falls nur öffentliche Tabellen benötigt werden. |
+| `SUPABASE_ANON_KEY` | ➖ | Optionaler Alternativ-Key, falls nur öffentliche Tabellen gelesen werden. |
+
+\* Pflicht, sofern kein `SUPABASE_ANON_KEY` gesetzt ist.
 
 > **Note:** In `guild` mode, the bot auto-registers commands for **every guild** it's in and on every new **guild join**. In `global` mode, it registers globally.
 
@@ -36,6 +41,21 @@ npm i
 npm run dev
 ```
 Health endpoint: `http://localhost:3000/health`
+
+---
+
+## Supabase-Anbindung
+
+- Lege die Variablen `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY` (oder `SUPABASE_ANON_KEY`) in deiner `.env` an.
+- Der Bot verwendet den [Supabase JavaScript Client](https://supabase.com/docs/reference/javascript/start) ohne persistente Sessions.
+- Beispiel `.env`-Auszug:
+
+```env
+SUPABASE_URL=https://<projekt>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
+```
+
+Der Slash-Command `/auctions` liest aktive Auktionen aus der Tabelle `auction_listings` und stellt sie in Discord dar. Über die Optionen `status` und `limit` kannst du die Ergebnisse filtern.
 
 ---
 
