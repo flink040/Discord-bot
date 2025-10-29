@@ -1,8 +1,6 @@
-import { SlashCommandBuilder, time, type ChatInputCommandInteraction } from 'discord.js';
+import { SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
-
-const MAX_RESULTS = 5;
 
 const currencyFormatter = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
 
@@ -11,26 +9,27 @@ type ItemRow = {
   name: string;
 };
 
-type ListingRow = {
-  title: string;
-  status: string;
-  currency: string | null;
-  starting_bid: number | null;
-  current_bid: number | null;
-  buyout_price: number | null;
-  ends_at: string | null;
+type MarketLinkRow = {
+  listing_id: string;
+  auction_listings:
+    | {
+        currency: string | null;
+      }
+    | {
+        currency: string | null;
+      }[]
+    | null;
 };
 
-type MarketLinkRow = {
-  status: string;
-  confidence: number | null;
-  source: string | null;
-  auction_listings: ListingRow | ListingRow[] | null;
+type SnapshotRow = {
+  listing_id: string;
+  collected_at: string;
+  current_bid: number | string | null;
 };
 
 export const data = new SlashCommandBuilder()
   .setName('itemprice')
-  .setDescription('Zeigt Preisdaten für ein Item anhand verknüpfter Auktionen an.')
+  .setDescription('Zeigt aggregierte Preisdaten für ein Item an.')
   .addStringOption(option =>
     option
       .setName('name')
@@ -60,13 +59,10 @@ async function fetchMarketLinks(itemId: string): Promise<MarketLinkRow[]> {
   const supabase = getSupabaseClient();
   const { data: rows, error } = await supabase
     .from('item_market_links')
-    .select(
-      `status, confidence, source, auction_listings(title, status, currency, starting_bid, current_bid, buyout_price, ends_at)`
-    )
+    .select(`listing_id, auction_listings(currency)`)
     .eq('item_id', itemId)
     .eq('status', 'confirmed')
-    .order('updated_at', { ascending: false })
-    .limit(MAX_RESULTS);
+    .order('updated_at', { ascending: false });
 
   if (error) {
     throw new Error(error.message);
@@ -75,19 +71,75 @@ async function fetchMarketLinks(itemId: string): Promise<MarketLinkRow[]> {
   return rows ?? [];
 }
 
-function formatPrice(value: number | null, currency: string | null, label: string): string | null {
+async function fetchSnapshots(listingIds: string[]): Promise<SnapshotRow[]> {
+  if (listingIds.length === 0) return [];
+
+  const supabase = getSupabaseClient();
+  const { data: rows, error } = await supabase
+    .from('auction_snapshots')
+    .select('listing_id, collected_at, current_bid')
+    .in('listing_id', listingIds)
+    .order('collected_at', { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return rows ?? [];
+}
+
+function normalizeNumber(value: number | string | null): number | null {
   if (value === null) return null;
-  const formatted = currencyFormatter.format(Number(value));
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+type BidSample = {
+  amount: number;
+  collectedAt: Date;
+};
+
+function extractBids(rows: SnapshotRow[]): BidSample[] {
+  return rows
+    .map(row => {
+      const amount = normalizeNumber(row.current_bid);
+      const collectedAt = new Date(row.collected_at);
+      if (amount === null || Number.isNaN(collectedAt.getTime())) return null;
+      return { amount, collectedAt } satisfies BidSample;
+    })
+    .filter((value): value is BidSample => value !== null)
+    .sort((a, b) => a.collectedAt.getTime() - b.collectedAt.getTime());
+}
+
+function averageAmount(samples: BidSample[], days?: number): number | null {
+  let relevant = samples;
+  if (typeof days === 'number') {
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    relevant = samples.filter(sample => sample.collectedAt.getTime() >= cutoff);
+  }
+
+  if (relevant.length === 0) return null;
+  const sum = relevant.reduce((acc, sample) => acc + sample.amount, 0);
+  return sum / relevant.length;
+}
+
+function formatPrice(value: number | null, currency: string | null, label: string): string {
+  if (value === null) return `${label}: keine Daten`;
+  const formatted = currencyFormatter.format(value);
   return `${label}: ${formatted}${currency ? ` ${currency}` : ''}`;
 }
 
-function resolveListing(link: MarketLinkRow): ListingRow | null {
-  const listing = link.auction_listings;
-  if (!listing) return null;
-  if (Array.isArray(listing)) {
-    return listing[0] ?? null;
+function resolveCurrency(links: MarketLinkRow[]): string | null {
+  for (const link of links) {
+    const listing = link.auction_listings;
+    if (!listing) continue;
+    const resolved = Array.isArray(listing) ? listing[0] : listing;
+    if (resolved?.currency) return resolved.currency;
   }
-  return listing;
+  return null;
 }
 
 export const execute = async (interaction: ChatInputCommandInteraction) => {
@@ -108,44 +160,33 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const lines = links.map((link, idx) => {
-      const listing = resolveListing(link);
-      if (!listing) {
-        return `**${idx + 1}.** Verknüpfte Auktion konnte nicht geladen werden.`;
-      }
+    const listingIds = Array.from(new Set(links.map(link => link.listing_id).filter(Boolean)));
 
-      const parts = [`**${idx + 1}. ${listing.title}**`];
-      parts.push(`Auktionsstatus: ${listing.status}`);
+    const snapshots = await fetchSnapshots(listingIds);
+    const bids = extractBids(snapshots);
 
-      const prices = [
-        formatPrice(listing.starting_bid, listing.currency, 'Startgebot'),
-        formatPrice(listing.current_bid, listing.currency, 'Aktuelles Gebot'),
-        formatPrice(listing.buyout_price, listing.currency, 'Sofortkauf'),
-      ].filter((value): value is string => value !== null);
+    if (bids.length === 0) {
+      await interaction.editReply(`Keine Gebotsdaten für **${item.name}** gefunden.`);
+      return;
+    }
 
-      if (prices.length > 0) {
-        parts.push(prices.join(' • '));
-      }
+    const currency = resolveCurrency(links);
 
-      if (listing.ends_at) {
-        const endsAt = new Date(listing.ends_at);
-        if (!Number.isNaN(endsAt.getTime())) {
-          parts.push(`Läuft ab: ${time(endsAt, 'R')}`);
-        }
-      }
+    const lastBid = bids[bids.length - 1]?.amount ?? null;
+    const avg7 = averageAmount(bids, 7);
+    const avg30 = averageAmount(bids, 30);
+    const avgAll = averageAmount(bids);
 
-      if (link.source) {
-        parts.push(`Quelle: ${link.source}`);
-      }
+    const lines = [
+      `**Preisdaten für ${item.name}**`,
+      formatPrice(lastBid, currency, 'Letztes Gebot'),
+      formatPrice(avg7, currency, 'Durchschnitt 7 Tage'),
+      formatPrice(avg30, currency, 'Durchschnitt 30 Tage'),
+      formatPrice(avgAll, currency, 'Durchschnitt gesamt'),
+      `Anzahl Datensätze: ${bids.length}`,
+    ];
 
-      if (link.confidence !== null) {
-        parts.push(`Confidence: ${(link.confidence * 100).toFixed(0)}%`);
-      }
-
-      return parts.join('\n');
-    });
-
-    await interaction.editReply(lines.join('\n\n'));
+    await interaction.editReply(lines.join('\n'));
   } catch (err) {
     console.error('[command:itemprice]', err);
     if (err instanceof Error) {

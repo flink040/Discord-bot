@@ -1,10 +1,4 @@
-import {
-  EmbedBuilder,
-  SlashCommandBuilder,
-  time,
-  type APIEmbedField,
-  type ChatInputCommandInteraction,
-} from 'discord.js';
+import { SlashCommandBuilder, time, type ChatInputCommandInteraction } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
@@ -42,29 +36,6 @@ function formatStars(stars: number): string {
   if (stars <= 0) return 'Keine Sterne';
   const starCount = Math.min(stars, 10);
   return `${'★'.repeat(starCount)}${stars > starCount ? ` (+${stars - starCount})` : ''}`;
-}
-
-function getEmbedColor(rarityLabel: string | null, stars: number): number {
-  const normalizedRarity = rarityLabel?.toLowerCase();
-  switch (normalizedRarity) {
-    case 'gewöhnlich':
-    case 'common':
-      return 0x9d9d9d;
-    case 'selten':
-    case 'rare':
-      return 0x0070dd;
-    case 'episch':
-    case 'epic':
-      return 0xa335ee;
-    case 'legendär':
-    case 'legendary':
-      return 0xff8000;
-    default: {
-      const starColors = [0x2f3136, 0x9d9d9d, 0xffffff, 0x1eff00, 0x0070dd, 0xa335ee, 0xff8000];
-      const index = Math.min(Math.max(stars, 0), starColors.length - 1);
-      return starColors[index];
-    }
-  }
 }
 
 async function fetchItems({
@@ -105,47 +76,29 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const embeds = items.map(item => {
+    const lines = items.map((item, idx) => {
+      const parts = [`**${idx + 1}. ${item.name}**`];
       const rarityLabel = getRarityLabel(item);
-      const embed = new EmbedBuilder()
-        .setTitle(item.name)
-        .setColor(getEmbedColor(rarityLabel, item.stars))
-        .setFooter({ text: 'Itemdaten aus Supabase' });
-
-      const descriptionParts: string[] = [];
       if (rarityLabel) {
-        descriptionParts.push(`Seltenheit: **${rarityLabel}**`);
+        parts.push(`Seltenheit: ${rarityLabel}`);
       }
-      descriptionParts.push(`Sterne: ${formatStars(item.stars)}`);
-
-      const fields: APIEmbedField[] = [];
+      parts.push(`Sterne: ${formatStars(item.stars)}`);
       if (item.material) {
-        fields.push({ name: 'Material', value: item.material, inline: true });
+        parts.push(`Material: ${item.material}`);
       }
       if (item.origin) {
-        fields.push({ name: 'Herkunft', value: item.origin, inline: true });
+        parts.push(`Herkunft: ${item.origin}`);
       }
-
-      if (fields.length > 0) {
-        embed.addFields(fields);
-      }
-
       if (item.created_at) {
         const createdAt = new Date(item.created_at);
         if (!Number.isNaN(createdAt.getTime())) {
-          descriptionParts.push(`Hinzugefügt: ${time(createdAt, 'R')}`);
-          embed.setTimestamp(createdAt);
+          parts.push(`Erstellt: ${time(createdAt, 'R')}`);
         }
       }
-
-      if (descriptionParts.length > 0) {
-        embed.setDescription(descriptionParts.join('\n'));
-      }
-
-      return embed;
+      return parts.join('\n');
     });
 
-    await interaction.editReply({ embeds });
+    await interaction.editReply(lines.join('\n\n'));
   } catch (err) {
     console.error('[command:item]', err);
     if (err instanceof Error) {
