@@ -2,7 +2,7 @@ import { SlashCommandBuilder, time, type ChatInputCommandInteraction } from 'dis
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
-const STATUSES = ['pending', 'approved', 'rejected'] as const;
+const DEFAULT_LIMIT = 3;
 
 export const data = new SlashCommandBuilder()
   .setName('item')
@@ -12,26 +12,10 @@ export const data = new SlashCommandBuilder()
       .setName('name')
       .setDescription('Filtert nach Itemnamen (Teilzeichenfolge)')
       .setRequired(false)
-  )
-  .addStringOption(option =>
-    option
-      .setName('status')
-      .setDescription('Filtert nach Status (Standard: approved)')
-      .setRequired(false)
-      .addChoices(...STATUSES.map(status => ({ name: status, value: status })))
-  )
-  .addIntegerOption(option =>
-    option
-      .setName('limit')
-      .setDescription('Anzahl der Items (1-5, Standard: 3)')
-      .setMinValue(1)
-      .setMaxValue(5)
-      .setRequired(false)
   );
 
 type ItemRow = {
   name: string;
-  status: string;
   stars: number;
   material: string | null;
   origin: string | null;
@@ -56,21 +40,17 @@ function formatStars(stars: number): string {
 
 async function fetchItems({
   name,
-  status,
-  limit,
 }: {
   name?: string | null;
-  status: string;
-  limit: number;
 }): Promise<ItemRow[]> {
   const supabase = getSupabaseClient();
 
   let query = supabase
     .from('items')
-    .select('name, status, stars, material, origin, created_at, rarities(label)')
-    .eq('status', status)
+    .select('name, stars, material, origin, created_at, rarities(label)')
+    .eq('status', 'approved')
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .limit(DEFAULT_LIMIT);
 
   if (name) {
     query = query.ilike('name', `%${name}%`);
@@ -88,11 +68,9 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   await interaction.deferReply();
 
   const name = interaction.options.getString('name');
-  const status = interaction.options.getString('status') ?? 'approved';
-  const limit = interaction.options.getInteger('limit') ?? 3;
 
   try {
-    const items = await fetchItems({ name, status, limit });
+    const items = await fetchItems({ name });
     if (items.length === 0) {
       await interaction.editReply('Keine Items mit diesen Kriterien gefunden.');
       return;
@@ -104,7 +82,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       if (rarityLabel) {
         parts.push(`Seltenheit: ${rarityLabel}`);
       }
-      parts.push(`Status: ${item.status}`);
       parts.push(`Sterne: ${formatStars(item.stars)}`);
       if (item.material) {
         parts.push(`Material: ${item.material}`);
