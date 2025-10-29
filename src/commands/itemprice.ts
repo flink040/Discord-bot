@@ -4,6 +4,11 @@ import { getSupabaseClient } from '../supabase';
 
 const currencyFormatter = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
 
+function displayCurrency(currency: string | null): string | null {
+  if (!currency) return null;
+  return currency.toLowerCase() === 'emerald' ? '$' : currency;
+}
+
 type ItemRow = {
   id: string;
   name: string;
@@ -75,17 +80,35 @@ async function fetchSnapshots(listingIds: string[]): Promise<SnapshotRow[]> {
   if (listingIds.length === 0) return [];
 
   const supabase = getSupabaseClient();
-  const { data: rows, error } = await supabase
-    .from('auction_snapshots')
-    .select('listing_id, collected_at, current_bid')
-    .in('listing_id', listingIds)
-    .order('collected_at', { ascending: true });
+  const pageSize = 1000;
+  const collected: SnapshotRow[] = [];
 
-  if (error) {
-    throw new Error(error.message);
+  for (let page = 0; ; page += 1) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const { data: rows, error } = await supabase
+      .from('auction_snapshots')
+      .select('listing_id, collected_at, current_bid')
+      .in('listing_id', listingIds)
+      .order('collected_at', { ascending: true })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!rows || rows.length === 0) {
+      break;
+    }
+
+    collected.push(...rows);
+
+    if (rows.length < pageSize) {
+      break;
+    }
   }
 
-  return rows ?? [];
+  return collected;
 }
 
 function normalizeNumber(value: number | string | null): number | null {
@@ -129,7 +152,8 @@ function averageAmount(samples: BidSample[], days?: number): number | null {
 function formatPrice(value: number | null, currency: string | null, label: string): string {
   if (value === null) return `${label}: keine Daten`;
   const formatted = currencyFormatter.format(value);
-  return `${label}: ${formatted}${currency ? ` ${currency}` : ''}`;
+  const suffix = displayCurrency(currency);
+  return `${label}: ${formatted}${suffix ? ` ${suffix}` : ''}`;
 }
 
 function resolveCurrency(links: MarketLinkRow[]): string | null {
