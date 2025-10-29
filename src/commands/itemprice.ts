@@ -5,6 +5,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  MessageFlags,
   StringSelectMenuBuilder,
   type ChatInputCommandInteraction,
   type MessageComponentInteraction,
@@ -17,7 +18,7 @@ import {
   type ChartType,
   type Plugin,
 } from 'chart.js';
-import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
+import { ChartJSNodeCanvas } from '../utils/chart';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
@@ -795,7 +796,9 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
       (selectedView !== '7d' && selectedView !== '30d' && selectedView !== 'all')
     ) {
       if (!interaction.replied) {
-        await interaction.reply({ content: 'Unbekannte Aktion.', ephemeral: true }).catch(() => {});
+        await interaction
+          .reply({ content: 'Unbekannte Aktion.', flags: MessageFlags.Ephemeral })
+          .catch(() => {});
       }
       return;
     }
@@ -812,7 +815,9 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
       (maybeMode !== 'raw' && maybeMode !== 'avg' && maybeMode !== 'both')
     ) {
       if (!interaction.replied) {
-        await interaction.reply({ content: 'Unbekannte Aktion.', ephemeral: true }).catch(() => {});
+        await interaction
+          .reply({ content: 'Unbekannte Aktion.', flags: MessageFlags.Ephemeral })
+          .catch(() => {});
       }
       return;
     }
@@ -820,14 +825,18 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
     state = { view: maybeView, mode: maybeMode };
   } else {
     if (!interaction.replied) {
-      await interaction.reply({ content: 'Dieser Interaktionstyp wird nicht unterstützt.', ephemeral: true }).catch(() => {});
+      await interaction
+        .reply({ content: 'Dieser Interaktionstyp wird nicht unterstützt.', flags: MessageFlags.Ephemeral })
+        .catch(() => {});
     }
     return;
   }
 
   if (!itemId || !state) {
     if (!interaction.replied) {
-      await interaction.reply({ content: 'Unbekannte Aktion.', ephemeral: true }).catch(() => {});
+      await interaction
+        .reply({ content: 'Unbekannte Aktion.', flags: MessageFlags.Ephemeral })
+        .catch(() => {});
     }
     return;
   }
@@ -869,10 +878,12 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
     console.error('[component:itemprice]', err);
     if (interaction.deferred || interaction.replied) {
       await interaction
-        .followUp({ content: 'Fehler beim Aktualisieren der Preisdaten.', ephemeral: true })
+        .followUp({ content: 'Fehler beim Aktualisieren der Preisdaten.', flags: MessageFlags.Ephemeral })
         .catch(() => {});
     } else {
-      await interaction.reply({ content: 'Fehler beim Aktualisieren der Preisdaten.', ephemeral: true }).catch(() => {});
+      await interaction
+        .reply({ content: 'Fehler beim Aktualisieren der Preisdaten.', flags: MessageFlags.Ephemeral })
+        .catch(() => {});
     }
   }
 };

@@ -79,12 +79,12 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   if (!interaction.inGuild() || !interaction.guild) {
     await interaction.reply({
       content: 'Dieser Befehl kann nur in einem Server ausgeführt werden.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const guild = interaction.guild;
   const role = guild.roles.cache.find(r => normalize(r.name) === normalize(VERIFIED_ROLE_NAME));

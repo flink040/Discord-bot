@@ -1,5 +1,5 @@
 
-import { SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 
 export const data = new SlashCommandBuilder()
@@ -7,9 +7,9 @@ export const data = new SlashCommandBuilder()
   .setDescription('Shows basic info about this bot.');
 
 export const execute = async (interaction: ChatInputCommandInteraction) => {
-  await interaction.reply({ 
+  await interaction.reply({
     content: 'OP-Item-DB helper bot — modular and Railway-ready. Use /ping to test availability.',
-    ephemeral: true
+    flags: MessageFlags.Ephemeral,
   });
 };
 
