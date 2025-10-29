@@ -1,5 +1,9 @@
 
-import type { RESTPostAPIChatInputApplicationCommandsJSONBody, ChatInputCommandInteraction } from 'discord.js';
+import type {
+  RESTPostAPIChatInputApplicationCommandsJSONBody,
+  ChatInputCommandInteraction,
+  MessageComponentInteraction,
+} from 'discord.js';
 
 export interface CommandDef {
   data: RESTPostAPIChatInputApplicationCommandsJSONBody;
@@ -8,4 +12,5 @@ export interface CommandDef {
    * When set to false the command stays in the code base but will not be loaded or registered.
    */
   enabled?: boolean;
+  handleComponent?: (interaction: MessageComponentInteraction) => Promise<void>;
 }

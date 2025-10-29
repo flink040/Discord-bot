@@ -58,7 +58,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
 Die Slash-Commands im Überblick:
 
 - `/item` zeigt Einträge aus der Tabelle `items` an. Über die optionale Eingabe `name` lässt sich nach einer Teilzeichenfolge filtern. Es werden ausschließlich freigegebene (`approved`) Items angezeigt.
-- `/itemprice` sucht nach einem freigegebenen Item und fasst die verknüpften Gebotsdaten (letztes Gebot, Durchschnitt der letzten 7/30 Tage, Gesamtdurchschnitt, Anzahl Datensätze) zusammen und zeigt zusätzlich einen grafischen Verlauf als Sparklines inklusive Zeitraum an.
+- `/itemprice` sucht nach einem freigegebenen Item, fasst die verknüpften Gebotsdaten (letztes Gebot, Durchschnitt der letzten 7/30 Tage, Gesamtdurchschnitt, Anzahl Datensätze) in einem Rich Embed zusammen und blendet einen Sparkline-Verlauf ein. Über Buttons lassen sich unterschiedliche Zeitfenster (7 Tage, 30 Tage, Gesamt) für die grafische Darstellung auswählen.
 
 > Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
 

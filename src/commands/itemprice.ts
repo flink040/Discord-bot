@@ -1,4 +1,12 @@
-import { SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  type ChatInputCommandInteraction,
+  type MessageComponentInteraction,
+} from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
@@ -8,6 +16,10 @@ function displayCurrency(currency: string | null): string | null {
   if (!currency) return null;
   return currency.toLowerCase() === 'emerald' ? '$' : currency;
 }
+
+const COMMAND_ID = 'itemprice';
+
+type ViewMode = '7d' | '30d' | 'all';
 
 type ItemRow = {
   id: string;
@@ -51,6 +63,22 @@ async function findItemByName(name: string): Promise<ItemRow | null> {
     .ilike('name', `%${name}%`)
     .order('name', { ascending: true })
     .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return row ?? null;
+}
+
+async function fetchItemById(id: string): Promise<ItemRow | null> {
+  const supabase = getSupabaseClient();
+  const { data: row, error } = await supabase
+    .from('items')
+    .select('id, name')
+    .eq('status', 'approved')
+    .eq('id', id)
     .maybeSingle();
 
   if (error) {
@@ -194,11 +222,101 @@ function formatDateRange(samples: BidSample[]): string | null {
   return `${first} – ${last}`;
 }
 
-function formatPrice(value: number | null, currency: string | null, label: string): string {
-  if (value === null) return `${label}: keine Daten`;
+function formatPriceValue(value: number | null, currency: string | null): string {
+  if (value === null) return 'keine Daten';
   const formatted = currencyFormatter.format(value);
   const suffix = displayCurrency(currency);
-  return `${label}: ${formatted}${suffix ? ` ${suffix}` : ''}`;
+  return `${formatted}${suffix ? ` ${suffix}` : ''}`;
+}
+
+const viewLabels: Record<ViewMode, string> = {
+  '7d': '7 Tage',
+  '30d': '30 Tage',
+  all: 'Gesamt',
+};
+
+function filterSamplesByView(samples: BidSample[], view: ViewMode): BidSample[] {
+  if (view === 'all') return samples;
+  const days = view === '7d' ? 7 : 30;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return samples.filter(sample => sample.collectedAt.getTime() >= cutoff);
+}
+
+type PriceSummary = {
+  lastBid: number | null;
+  avg7: number | null;
+  avg30: number | null;
+  avgAll: number | null;
+  count: number;
+};
+
+function summarizeBids(samples: BidSample[]): PriceSummary {
+  return {
+    lastBid: samples[samples.length - 1]?.amount ?? null,
+    avg7: averageAmount(samples, 7),
+    avg30: averageAmount(samples, 30),
+    avgAll: averageAmount(samples),
+    count: samples.length,
+  } satisfies PriceSummary;
+}
+
+function buildPriceEmbed(options: {
+  itemName: string;
+  currency: string | null;
+  samples: BidSample[];
+  summary: PriceSummary;
+  view: ViewMode;
+}): EmbedBuilder {
+  const { itemName, currency, samples, summary, view } = options;
+  const viewSamples = filterSamplesByView(samples, view);
+  const sparkline = buildSparkline(viewSamples);
+  const viewLabel = viewLabels[view];
+  const viewRange = formatDateRange(viewSamples);
+  const overallRange = formatDateRange(samples);
+
+  let description = `**Trend (${viewLabel})**\n`;
+  if (sparkline) {
+    description += `\`\`\`\n${sparkline}\n\`\`\``;
+  } else if (viewSamples.length === 1) {
+    description += 'Nur ein Datenpunkt verfügbar.';
+  } else {
+    description += 'Keine Daten verfügbar.';
+  }
+
+  const footerParts: string[] = [];
+  footerParts.push(`Zeitraum (${viewLabel}): ${viewRange ?? '–'}`);
+  if (view !== 'all' && overallRange) {
+    footerParts.push(`Gesamtzeitraum: ${overallRange}`);
+  }
+  const footerText = footerParts.join(' • ');
+
+  return new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle(`Preisdaten für ${itemName}`)
+    .setDescription(description)
+    .addFields(
+      { name: 'Letztes Gebot', value: formatPriceValue(summary.lastBid, currency), inline: true },
+      { name: 'Durchschnitt 7 Tage', value: formatPriceValue(summary.avg7, currency), inline: true },
+      { name: 'Durchschnitt 30 Tage', value: formatPriceValue(summary.avg30, currency), inline: true },
+      { name: 'Durchschnitt gesamt', value: formatPriceValue(summary.avgAll, currency), inline: true },
+      { name: 'Anzahl Datensätze', value: currencyFormatter.format(summary.count), inline: true },
+    )
+    .setFooter({ text: footerText });
+}
+
+function buildComponents(itemId: string, samples: BidSample[], activeView: ViewMode) {
+  const row = new ActionRowBuilder<ButtonBuilder>();
+  (['7d', '30d', 'all'] as ViewMode[]).forEach(view => {
+    const viewSamples = filterSamplesByView(samples, view);
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${COMMAND_ID}:${itemId}:${view}`)
+        .setLabel(viewLabels[view])
+        .setStyle(view === activeView ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setDisabled(viewSamples.length === 0)
+    );
+  });
+  return [row];
 }
 
 function resolveCurrency(links: MarketLinkRow[]): string | null {
@@ -209,6 +327,32 @@ function resolveCurrency(links: MarketLinkRow[]): string | null {
     if (resolved?.currency) return resolved.currency;
   }
   return null;
+}
+
+type PriceDataset =
+  | { status: 'ok'; bids: BidSample[]; currency: string | null }
+  | { status: 'no-links' }
+  | { status: 'no-bids' };
+
+async function loadPriceDataset(itemId: string): Promise<PriceDataset> {
+  const links = await fetchMarketLinks(itemId);
+  if (links.length === 0) {
+    return { status: 'no-links' };
+  }
+
+  const listingIds = Array.from(new Set(links.map(link => link.listing_id).filter(Boolean)));
+  const snapshots = await fetchSnapshots(listingIds);
+  const bids = extractBids(snapshots);
+
+  if (bids.length === 0) {
+    return { status: 'no-bids' };
+  }
+
+  return {
+    status: 'ok',
+    bids,
+    currency: resolveCurrency(links),
+  };
 }
 
 export const execute = async (interaction: ChatInputCommandInteraction) => {
@@ -222,49 +366,34 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       await interaction.editReply('Kein freigegebenes Item mit diesem Namen gefunden.');
       return;
     }
-
-    const links = await fetchMarketLinks(item.id);
-    if (links.length === 0) {
-      await interaction.editReply(`Keine Preisdaten für **${item.name}** gefunden.`);
+    const dataset = await loadPriceDataset(item.id);
+    if (dataset.status === 'no-links') {
+      await interaction.editReply({
+        content: `Keine Preisdaten für **${item.name}** gefunden.`,
+        components: [],
+      });
       return;
     }
 
-    const listingIds = Array.from(new Set(links.map(link => link.listing_id).filter(Boolean)));
-
-    const snapshots = await fetchSnapshots(listingIds);
-    const bids = extractBids(snapshots);
-
-    if (bids.length === 0) {
-      await interaction.editReply(`Keine Gebotsdaten für **${item.name}** gefunden.`);
+    if (dataset.status === 'no-bids') {
+      await interaction.editReply({
+        content: `Keine Gebotsdaten für **${item.name}** gefunden.`,
+        components: [],
+      });
       return;
     }
 
-    const currency = resolveCurrency(links);
+    const summary = summarizeBids(dataset.bids);
+    const embed = buildPriceEmbed({
+      itemName: item.name,
+      currency: dataset.currency,
+      samples: dataset.bids,
+      summary,
+      view: 'all',
+    });
+    const components = buildComponents(item.id, dataset.bids, 'all');
 
-    const lastBid = bids[bids.length - 1]?.amount ?? null;
-    const avg7 = averageAmount(bids, 7);
-    const avg30 = averageAmount(bids, 30);
-    const avgAll = averageAmount(bids);
-    const sparkline = buildSparkline(bids);
-    const dateRange = formatDateRange(bids);
-
-    const lines = [
-      `**Preisdaten für ${item.name}**`,
-      formatPrice(lastBid, currency, 'Letztes Gebot'),
-      formatPrice(avg7, currency, 'Durchschnitt 7 Tage'),
-      formatPrice(avg30, currency, 'Durchschnitt 30 Tage'),
-      formatPrice(avgAll, currency, 'Durchschnitt gesamt'),
-      `Anzahl Datensätze: ${bids.length}`,
-    ];
-
-    if (sparkline) {
-      lines.push(`Verlauf: ${sparkline}`);
-      if (dateRange) {
-        lines.push(`Zeitraum: ${dateRange}`);
-      }
-    }
-
-    await interaction.editReply(lines.join('\n'));
+    await interaction.editReply({ embeds: [embed], components });
   } catch (err) {
     console.error('[command:itemprice]', err);
     if (err instanceof Error) {
@@ -275,5 +404,64 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 };
 
-export default { data: data.toJSON(), execute } satisfies CommandDef;
+export const handleComponent = async (interaction: MessageComponentInteraction) => {
+  if (!interaction.isButton()) {
+    if (!interaction.replied) {
+      await interaction.reply({ content: 'Dieser Interaktionstyp wird nicht unterstützt.', ephemeral: true });
+    }
+    return;
+  }
+
+  const [, itemId, view] = interaction.customId.split(':');
+  if (!itemId || (view !== '7d' && view !== '30d' && view !== 'all')) {
+    if (!interaction.replied) {
+      await interaction.reply({ content: 'Unbekannte Aktion.', ephemeral: true }).catch(() => {});
+    }
+    return;
+  }
+
+  try {
+    const item = await fetchItemById(itemId);
+    if (!item) {
+      await interaction.update({ content: 'Item nicht gefunden.', components: [], embeds: [] }).catch(() => {});
+      return;
+    }
+
+    const dataset = await loadPriceDataset(item.id);
+    if (dataset.status === 'no-links') {
+      await interaction
+        .update({ content: `Keine Preisdaten für **${item.name}** gefunden.`, components: [], embeds: [] })
+        .catch(() => {});
+      return;
+    }
+
+    if (dataset.status === 'no-bids') {
+      await interaction
+        .update({ content: `Keine Gebotsdaten für **${item.name}** gefunden.`, components: [], embeds: [] })
+        .catch(() => {});
+      return;
+    }
+
+    const summary = summarizeBids(dataset.bids);
+    const embed = buildPriceEmbed({
+      itemName: item.name,
+      currency: dataset.currency,
+      samples: dataset.bids,
+      summary,
+      view: view as ViewMode,
+    });
+    const components = buildComponents(item.id, dataset.bids, view as ViewMode);
+
+    await interaction.update({ embeds: [embed], components }).catch(() => {});
+  } catch (err) {
+    console.error('[component:itemprice]', err);
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp({ content: 'Fehler beim Aktualisieren der Preisdaten.', ephemeral: true }).catch(() => {});
+    } else {
+      await interaction.reply({ content: 'Fehler beim Aktualisieren der Preisdaten.', ephemeral: true }).catch(() => {});
+    }
+  }
+};
+
+export default { data: data.toJSON(), execute, handleComponent } satisfies CommandDef;
 

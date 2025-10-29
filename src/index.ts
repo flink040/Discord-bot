@@ -50,20 +50,47 @@ client.on(Events.GuildCreate, async (guild) => {
 
 // Handle interactions
 client.on(Events.InteractionCreate, async (interaction: Interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  const cmd = commands.get(interaction.commandName);
-  if (!cmd) {
-    await interaction.reply({ content: 'Unknown command.', ephemeral: true }).catch(() => {});
+  if (interaction.isChatInputCommand()) {
+    const cmd = commands.get(interaction.commandName);
+    if (!cmd) {
+      await interaction.reply({ content: 'Unknown command.', ephemeral: true }).catch(() => {});
+      return;
+    }
+    try {
+      await cmd.execute(interaction);
+    } catch (err) {
+      console.error(`[command:${interaction.commandName}]`, err);
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('❌ An error occurred while executing this command.').catch(() => {});
+      } else {
+        await interaction
+          .reply({ content: '❌ An error occurred while executing this command.', ephemeral: true })
+          .catch(() => {});
+      }
+    }
     return;
   }
-  try {
-    await cmd.execute(interaction);
-  } catch (err) {
-    console.error(`[command:${interaction.commandName}]`, err);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply('❌ An error occurred while executing this command.').catch(() => {});
-    } else {
-      await interaction.reply({ content: '❌ An error occurred while executing this command.', ephemeral: true }).catch(() => {});
+
+  if (interaction.isMessageComponent()) {
+    const [commandName] = interaction.customId.split(':', 1);
+    const cmd = commands.get(commandName);
+    if (!cmd || typeof cmd.handleComponent !== 'function') {
+      return;
+    }
+
+    try {
+      await cmd.handleComponent(interaction);
+    } catch (err) {
+      console.error(`[component:${interaction.customId}]`, err);
+      if (interaction.deferred || interaction.replied) {
+        await interaction
+          .followUp({ content: '❌ Fehler bei der Verarbeitung der Aktion.', ephemeral: true })
+          .catch(() => {});
+      } else {
+        await interaction
+          .reply({ content: '❌ Fehler bei der Verarbeitung der Aktion.', ephemeral: true })
+          .catch(() => {});
+      }
     }
   }
 });
