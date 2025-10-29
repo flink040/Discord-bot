@@ -6,6 +6,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
+import { getModerationChannelId } from '../utils/moderation';
 
 const MAX_TIMEOUT_MINUTES = 28 * 24 * 60; // Discord allows up to 28 days
 
@@ -67,7 +68,8 @@ async function requireModeratorPermission(interaction: MuteCommandInteraction) {
 }
 
 async function notifyModerationChannel(interaction: MuteCommandInteraction, message: string) {
-  const channelId = process.env.MODERATION_CHANNEL_ID;
+  const channelId =
+    (await getModerationChannelId(interaction.guild.id)) ?? process.env.MODERATION_CHANNEL_ID;
   if (!channelId) {
     return;
   }

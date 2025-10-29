@@ -28,7 +28,7 @@ No extra "register" step needed.
 | `SUPABASE_URL` | ✅ | URL deines Supabase-Projekts (z. B. `https://xyz.supabase.co`) |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅* | Service-Role-Key für serverseitige Zugriffe. Alternativ `SUPABASE_ANON_KEY` setzen, falls nur öffentliche Tabellen benötigt werden. |
 | `SUPABASE_ANON_KEY` | ➖ | Optionaler Alternativ-Key, falls nur öffentliche Tabellen gelesen werden. |
-| `MODERATION_CHANNEL_ID` | ➖ | Channel-ID eines Textkanals, in dem Moderationsmeldungen (z. B. von `/mute`) gepostet werden. |
+| `MODERATION_CHANNEL_ID` | ➖ | Globale Fallback-Channel-ID für Moderationsmeldungen (z. B. von `/mute`). Kann pro Server mit `/setmoderation` überschrieben werden. |
 
 \* Pflicht, sofern kein `SUPABASE_ANON_KEY` gesetzt ist.
 
@@ -61,6 +61,7 @@ Die Slash-Commands im Überblick:
 - `/item` zeigt Einträge aus der Tabelle `items` an. Über die optionale Eingabe `name` lässt sich nach einer Teilzeichenfolge filtern. Es werden ausschließlich freigegebene (`approved`) Items angezeigt.
 - `/itemprice` sucht nach einem freigegebenen Item, fasst die verknüpften Gebotsdaten (letztes Gebot, Durchschnitt der letzten 7/30 Tage, Gesamtdurchschnitt, Anzahl Datensätze) in einem Rich Embed zusammen und rendert ein echtes Liniendiagramm als Anhang. Über ein Dropdown lässt sich der Zeitraum (7 Tage, 30 Tage, Gesamt) wählen, zusätzliche Buttons schalten zwischen Rohdaten-, Durchschnitts- oder Kombi-Ansicht um. Diagramm und Embed orientieren sich optisch an [op-item-db.com](https://op-item-db.com/) und enthalten klar beschriftete Achsen.
 - `/mute` mutet einen Spieler für eine festgelegte Anzahl an Minuten (Voice & Text) und protokolliert den Mute im konfigurierten Moderationschannel.
+- `/setmoderation` legt den Channel fest, in dem Moderationsmeldungen für den aktuellen Server erscheinen sollen.
 
 > Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
 
