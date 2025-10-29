@@ -1,0 +1,15 @@
+
+# dependencies
+node_modules/
+
+# production
+dist/
+
+# env
+.env
+.env.*
+
+# misc
+.DS_Store
+.nyc_output
+coverage
