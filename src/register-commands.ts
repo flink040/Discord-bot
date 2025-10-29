@@ -1,4 +1,3 @@
-
 import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
 import { loadCommands, commandsJson } from './commands/_loader';
@@ -19,16 +18,16 @@ if (mode === 'dev' && !guildId) {
 }
 
 async function main() {
-  const rest = new REST({ version: '10' }).setToken(token);
+  const rest = new REST({ version: '10' }).setToken(token!);
   const commands = commandsJson(loadCommands());
 
   if (mode === 'global') {
     console.log(`[register] Registering ${commands.length} global commands...`);
-    await rest.put(Routes.applicationCommands(appId), { body: commands });
+    await rest.put(Routes.applicationCommands(appId!), { body: commands });
     console.log('[register] Global commands registered.');
   } else {
     console.log(`[register] Registering ${commands.length} guild commands to ${guildId}...`);
-    await rest.put(Routes.applicationGuildCommands(appId, guildId!), { body: commands });
+    await rest.put(Routes.applicationGuildCommands(appId!, guildId!), { body: commands });
     console.log('[register] Guild commands registered.');
   }
 }
