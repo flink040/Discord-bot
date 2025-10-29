@@ -25,6 +25,11 @@ No extra "register" step needed.
 | `REGISTER_MODE` | ➖ | `guild` (default) or `global` |
 | `PORT` | ➖ | Railway injects this. Defaults to 3000 locally. |
 | `NODE_ENV` | ➖ | `development` or `production` |
+| `SUPABASE_URL` | ✅ | URL deines Supabase-Projekts (z. B. `https://xyz.supabase.co`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅* | Service-Role-Key für serverseitige Zugriffe. Alternativ `SUPABASE_ANON_KEY` setzen, falls nur öffentliche Tabellen benötigt werden. |
+| `SUPABASE_ANON_KEY` | ➖ | Optionaler Alternativ-Key, falls nur öffentliche Tabellen gelesen werden. |
+
+\* Pflicht, sofern kein `SUPABASE_ANON_KEY` gesetzt ist.
 
 > **Note:** In `guild` mode, the bot auto-registers commands for **every guild** it's in and on every new **guild join**. In `global` mode, it registers globally.
 
@@ -36,6 +41,26 @@ npm i
 npm run dev
 ```
 Health endpoint: `http://localhost:3000/health`
+
+---
+
+## Supabase-Anbindung
+
+- Lege die Variablen `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY` (oder `SUPABASE_ANON_KEY`) in deiner `.env` an.
+- Der Bot verwendet den [Supabase JavaScript Client](https://supabase.com/docs/reference/javascript/start) ohne persistente Sessions.
+- Beispiel `.env`-Auszug:
+
+```env
+SUPABASE_URL=https://<projekt>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
+```
+
+Die Slash-Commands im Überblick:
+
+- `/item` zeigt Einträge aus der Tabelle `items` an. Über die optionale Eingabe `name` lässt sich nach einer Teilzeichenfolge filtern. Es werden ausschließlich freigegebene (`approved`) Items angezeigt.
+- `/itemprice` sucht nach einem freigegebenen Item und fasst die verknüpften Gebotsdaten (letztes Gebot, Durchschnitt der letzten 7/30 Tage, Gesamtdurchschnitt und Anzahl Datensätze) zusammen.
+
+> Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
 
 ---
 
