@@ -16,12 +16,63 @@ const port = Number(process.env.PORT ?? 3000);
 const isDev = (process.env.NODE_ENV ?? 'production') !== 'production';
 const registerMode: RegisterMode = (process.env.REGISTER_MODE === 'global') ? 'global' : 'guild';
 
+function normalizeIntentName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+}
+
+function resolveGatewayIntents(envValue: string | undefined) {
+  const baseIntent = GatewayIntentBits.Guilds;
+  const resolved = new Set<number>([baseIntent]);
+  const unknown: string[] = [];
+
+  if (envValue) {
+    const lookup = new Map<string, number>(
+      Object.entries(GatewayIntentBits)
+        .filter(([, value]) => typeof value === 'number')
+        .map(([key, value]) => [normalizeIntentName(key), value as number]),
+    );
+
+    for (const raw of envValue.split(',').map(part => part.trim()).filter(Boolean)) {
+      const match = lookup.get(normalizeIntentName(raw));
+      if (match !== undefined) {
+        resolved.add(match);
+      } else {
+        unknown.push(raw);
+      }
+    }
+  }
+
+  const intentEntries = Object.entries(GatewayIntentBits)
+    .filter(([, value]) => typeof value === 'number')
+    .map(([key, value]) => [key, value as number] as const);
+
+  const names = Array.from(resolved).map((bit) => {
+    const entry = intentEntries.find(([, value]) => value === bit);
+    return entry ? entry[0] : `#${bit}`;
+  });
+
+  return { intents: Array.from(resolved), names, unknown };
+}
+
+const { intents, names: intentNames, unknown: unknownIntentNames } = resolveGatewayIntents(
+  process.env.DISCORD_INTENTS,
+);
+
+if (unknownIntentNames.length > 0) {
+  console.warn(
+    '[discord] Ignoring unknown gateway intents from DISCORD_INTENTS:',
+    unknownIntentNames.join(', '),
+  );
+}
+
+console.log(`[discord] Gateway intents: ${intentNames.join(', ')}`);
+
 // Start health server first
 const server = startHttpServer(port);
 
 // Discord client with minimal intents
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents,
 });
 
 // Load commands
