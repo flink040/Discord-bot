@@ -433,7 +433,12 @@ async function renderPriceChart(options: {
       responsive: false,
       maintainAspectRatio: false,
       layout: {
-        padding: 24,
+        padding: {
+          top: 28,
+          right: 32,
+          bottom: 72,
+          left: 72,
+        },
       },
       plugins: {
         legend: {
@@ -462,13 +467,13 @@ async function renderPriceChart(options: {
             text: 'Datum',
             color: chartAxisColor,
             font: axisLabelFont,
-            padding: 18,
+            padding: 36,
           },
           y: {
             text: `Preis${suffix ? ` (${suffix})` : ''}`,
             color: chartAxisColor,
             font: axisLabelFont,
-            padding: 24,
+            padding: 40,
           },
         },
         tooltip: { enabled: false },
