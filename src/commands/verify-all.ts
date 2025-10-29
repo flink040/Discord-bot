@@ -1,5 +1,6 @@
 import {
   DiscordAPIError,
+  MessageFlags,
   PermissionFlagsBits,
   RESTJSONErrorCodes,
   SlashCommandBuilder,
