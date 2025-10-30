@@ -268,7 +268,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
     if (canManageChannels) {
       const promptMessage = await interaction.followUp({
-        content: 'Soll ich einen neuen Marktplatzchannel erstellen?',
+        content: 'Soll ich einen Marktplatzchannel erstellen?',
         components: [
           new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
