@@ -31,8 +31,12 @@ function normalizeIntentName(name: string): string {
 }
 
 function resolveGatewayIntents(envValue: string | undefined) {
-  const baseIntent = GatewayIntentBits.Guilds;
-  const resolved = new Set<number>([baseIntent]);
+  const defaultIntents = [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ];
+  const resolved = new Set<number>(defaultIntents);
   const unknown: string[] = [];
 
   if (envValue) {
