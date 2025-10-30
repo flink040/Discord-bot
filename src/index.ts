@@ -310,6 +310,12 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
 
       await sendModerationMessage(guild, lines.join('\n'), { logTag: 'auto-mute' });
 
+      await message
+        .delete()
+        .catch((err) => {
+          console.warn('[blocklist] Failed to delete offending message after auto-mute:', err);
+        });
+
       const muteEndsAtSeconds = Math.floor((Date.now() + finalDuration) / 1000);
       const formattedDuration = formatDuration(finalDuration) || `${finalMinutes} Minute${finalMinutes === 1 ? '' : 'n'}`;
       const dmLines = [
