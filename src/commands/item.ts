@@ -100,6 +100,57 @@ function resolveExpiresInSeconds(): number | null {
   return parsed;
 }
 
+function resolveObjectPathCandidates(rawPath: string, bucket: string): string[] {
+  const candidates = new Set<string>();
+
+  const trimmedBucket = bucket.trim().replace(/^\/+|\/+$/g, '');
+  const pushCandidate = (value: string | null | undefined) => {
+    if (!value) return;
+    const normalized = value.trim().replace(/^\/+/, '');
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  };
+
+  const tryPushWithVariants = (value: string) => {
+    pushCandidate(value);
+
+    if (trimmedBucket && value.startsWith(`${trimmedBucket}/`)) {
+      pushCandidate(value.slice(trimmedBucket.length + 1));
+    }
+
+    if (value.startsWith('public/')) {
+      const withoutPublic = value.slice('public/'.length);
+      pushCandidate(withoutPublic);
+
+      if (trimmedBucket && withoutPublic.startsWith(`${trimmedBucket}/`)) {
+        pushCandidate(withoutPublic.slice(trimmedBucket.length + 1));
+      }
+    }
+  };
+
+  const directPath = rawPath.trim();
+  if (!directPath) {
+    return [];
+  }
+
+  try {
+    const parsedUrl = new URL(directPath);
+    const pathname = parsedUrl.pathname.replace(/^\/+/, '');
+    const storagePrefix = 'storage/v1/object/';
+
+    if (pathname.startsWith(storagePrefix)) {
+      tryPushWithVariants(pathname.slice(storagePrefix.length));
+    }
+
+    tryPushWithVariants(pathname);
+  } catch {
+    tryPushWithVariants(directPath.replace(/^\/+/, ''));
+  }
+
+  return Array.from(candidates);
+}
+
 async function loadImageAssets(options: {
   item: ItemRow;
   storageBucket: StorageBucketApi;
@@ -118,29 +169,48 @@ async function loadImageAssets(options: {
     const rawPath = image?.path?.trim();
     if (!rawPath) continue;
 
-    let objectPath = rawPath.replace(/^\/+/, '');
-    if (objectPath.startsWith(`${imageBucket}/`)) {
-      objectPath = objectPath.slice(imageBucket.length + 1);
+    const objectPathCandidates = resolveObjectPathCandidates(rawPath, imageBucket);
+    if (objectPathCandidates.length === 0) continue;
+
+    let selectedSignedUrl: { url: string; objectPath: string } | null = null;
+
+    for (const candidate of objectPathCandidates) {
+      try {
+        const { data: signedData, error: signedError } = await storageBucket.createSignedUrl(
+          candidate,
+          expiresInOverride ?? 60
+        );
+
+        if (signedError || !signedData?.signedUrl) {
+          console.warn('[command:item] Failed to create signed image URL', {
+            path: candidate,
+            error: signedError,
+          });
+          continue;
+        }
+
+        selectedSignedUrl = {
+          url: signedData.signedUrl,
+          objectPath: candidate,
+        };
+        break;
+      } catch (error) {
+        console.warn('[command:item] Unexpected error while signing image URL', {
+          error,
+          path: candidate,
+        });
+      }
+    }
+
+    if (!selectedSignedUrl) {
+      continue;
     }
 
     try {
-      const { data: signedData, error: signedError } = await storageBucket.createSignedUrl(
-        objectPath,
-        expiresInOverride ?? 60
-      );
-
-      if (signedError || !signedData?.signedUrl) {
-        console.warn('[command:item] Failed to create signed image URL', {
-          path: objectPath,
-          error: signedError,
-        });
-        continue;
-      }
-
-      const response = await fetch(signedData.signedUrl);
+      const response = await fetch(selectedSignedUrl.url);
       if (!response.ok) {
         console.warn('[command:item] Failed to download image', {
-          path: objectPath,
+          path: selectedSignedUrl.objectPath,
           status: response.status,
           statusText: response.statusText,
         });
@@ -152,7 +222,7 @@ async function loadImageAssets(options: {
 
       const typeLabel = (image?.type ?? 'Bild').trim() || 'Bild';
       const mimeType = response.headers.get('content-type') ?? undefined;
-      const extension = resolveImageExtension(objectPath, mimeType);
+      const extension = resolveImageExtension(selectedSignedUrl.objectPath, mimeType);
       const attachmentName = `${item.id}-${assets.length + 1}${extension}`;
 
       assets.push({
@@ -161,7 +231,10 @@ async function loadImageAssets(options: {
         attachment: new AttachmentBuilder(buffer, { name: attachmentName }),
       });
     } catch (error) {
-      console.warn('[command:item] Unexpected error while preparing image', { error, path: objectPath });
+      console.warn('[command:item] Unexpected error while preparing image', {
+        error,
+        path: selectedSignedUrl.objectPath,
+      });
     }
   }
 
