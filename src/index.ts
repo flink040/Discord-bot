@@ -319,9 +319,10 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
       const muteEndsAtSeconds = Math.floor((Date.now() + finalDuration) / 1000);
       const formattedDuration = formatDuration(finalDuration) || `${finalMinutes} Minute${finalMinutes === 1 ? '' : 'n'}`;
       const dmLines = [
-        `Du wurdest auf **${guild.name}** automatisch stummgeschaltet.`,
-        `Dauer: ${formattedDuration} (endet ${`<t:${muteEndsAtSeconds}:R>`}, ${`<t:${muteEndsAtSeconds}:f>`}).`,
-        `Grund: ${safeReason || 'Kein Grund angegeben'}`,
+        `Du Frechdachs hast auf **${guild.name}** Mist gemacht und bist jetzt stummgeschaltet.`,
+        `In den nächsten ${formattedDuration} kannst du darüber nachdenken wie man sich verhalten sollte.`
+        `Am ${`<t:${muteEndsAtSeconds}:f>`}) kannst du wieder am Geschehnis teilnehmen.`,
+        `Begründung: ${safeReason || 'Kein Grund angegeben'}`,
       ];
 
       await message.author

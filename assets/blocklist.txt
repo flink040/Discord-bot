@@ -16,13 +16,16 @@
 # 30 Minuten — starke Beleidigungen/Entmenschlichung
 30|Schwere Beleidigung (de)|i|\bh\W*ur\W*en\W*s[o0]hn\b|\bw\W*ichs\W*er\b|\ba\W*schl\W*och\b|\bb[a@]st[a@]rd\b|\bunterm\W*ensch\b
 30|Schwere Beleidigung (en)|i|\bf[a@][g9]{2}[o0]t\b|\br[e3]t[a@]rd\b|\bc\W*unt\b|\bd\W*ickh\W*ead\b|\bb\W*itch\b
+30|Schwere Beleidigung (explizit)|i|\bhurensohn\b
 
 # 15 Minuten — Beleidigungen/derbe Sprache
 15|Beleidigung|i|\bd\W*umm\W*k\W*opf\b|\bsp\W*ast\b|\bhalt\W*die\W*(schn\W*auze|fr[eä]sse)\b|\bf\W*ck\W*dich\b
+15|Unangemessene Ausdrucksweise (explizit)|i|\bfick(e|t|en|st)\b|\bfick\s*dich\b
+
 
 # 5 Minuten — Spam/Scam/NSFW/Flooding
 5|Spam/Scam Content|i|discord\.gg\/\w+|discord\.com\/invite\/\w+|free\s*nitro|giveaway|airdrop|onlyfans|snap\s*premium|crypto\s*giveaway|claim\s*here|free\s*skins
 5|Flooding/CAPS||([!?.,])\1{5,}|[A-ZÄÖÜ]{6,}
 5|Emoji-Flood|u|(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}){5,}
 5|Beleidigung (derb, mild)|i|\bn[uü]tt[e3]\b
-5|Derbe Sprache|i|\bwichs[e3]\b
+5|Unangemessene Ausdrucksweise|i|\bwichs[e3]\b
