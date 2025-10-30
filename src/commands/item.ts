@@ -3,6 +3,7 @@ import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
 const DEFAULT_LIMIT = 3;
+const DEFAULT_SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour
 
 export const data = new SlashCommandBuilder()
   .setName('item')
@@ -59,6 +60,14 @@ function formatStars(stars: number): string {
   return `${'★'.repeat(starCount)}${stars > starCount ? ` (+${stars - starCount})` : ''}`;
 }
 
+function normalizeUrl(url: string): string {
+  try {
+    return new URL(url).toString();
+  } catch {
+    return encodeURI(url);
+  }
+}
+
 async function fetchItems({
   name,
 }: {
@@ -105,6 +114,14 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   const name = interaction.options.getString('name');
   const supabase = getSupabaseClient();
   const imageBucket = process.env.SUPABASE_ITEM_IMAGE_BUCKET ?? 'item-images';
+  const signedUrlTtlEnv = process.env.SUPABASE_ITEM_IMAGE_SIGNED_URL_TTL;
+  const signedUrlTtlSeconds = signedUrlTtlEnv
+    ? Number.parseInt(signedUrlTtlEnv, 10)
+    : DEFAULT_SIGNED_URL_TTL_SECONDS;
+  const resolvedSignedUrlTtlSeconds = Number.isFinite(signedUrlTtlSeconds) && signedUrlTtlSeconds > 0
+    ? signedUrlTtlSeconds
+    : DEFAULT_SIGNED_URL_TTL_SECONDS;
+  const storageBucket = supabase.storage.from(imageBucket);
 
   try {
     const items = await fetchItems({ name });
@@ -113,104 +130,140 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const embeds = items.flatMap(item => {
-      const rarity = getFirstRelation(item.rarity);
-      const type = getFirstRelation(item.type);
-      const chest = getFirstRelation(item.chest);
+    const embedGroups = await Promise.all(
+      items.map(async item => {
+        const rarity = getFirstRelation(item.rarity);
+        const type = getFirstRelation(item.type);
+        const chest = getFirstRelation(item.chest);
 
-      const details: string[] = [];
-      if (type?.label) details.push(`**Item-Typ:** ${type.label}`);
-      if (rarity?.label) details.push(`**Seltenheit:** ${rarity.label}`);
-      if (item.stars > 0) details.push(`**Sterne:** ${formatStars(item.stars)}`);
-      if (item.material) details.push(`**Material:** ${item.material}`);
-      if (item.origin) details.push(`**Herkunft:** ${item.origin}`);
-      if (chest?.label) details.push(`**Truhe:** ${chest.label}`);
+        const details: string[] = [];
+        if (type?.label) details.push(`**Item-Typ:** ${type.label}`);
+        if (rarity?.label) details.push(`**Seltenheit:** ${rarity.label}`);
+        if (item.stars > 0) details.push(`**Sterne:** ${formatStars(item.stars)}`);
+        if (item.material) details.push(`**Material:** ${item.material}`);
+        if (item.origin) details.push(`**Herkunft:** ${item.origin}`);
+        if (chest?.label) details.push(`**Truhe:** ${chest.label}`);
 
-      const signatureText = toArray(item.signatures)
-        .map(signature => signature?.signer_name?.trim())
-        .filter((name): name is string => typeof name === 'string' && name.length > 0)
-        .sort((a, b) => a.localeCompare(b, 'de-DE'))
-        .map(name => `• ${name}`)
-        .join('\n') || null;
+        const signatureText =
+          toArray(item.signatures)
+            .map(signature => signature?.signer_name?.trim())
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+            .sort((a, b) => a.localeCompare(b, 'de-DE'))
+            .map(value => `• ${value}`)
+            .join('\n') || null;
 
-      const enchantmentText = toArray(item.enchantments)
-        .map(enchantment => {
-          const enchantmentInfo = getFirstRelation(enchantment.enchantment);
-          if (!enchantmentInfo?.label || !enchantment.level) return null;
-          return { label: enchantmentInfo.label, level: enchantment.level };
-        })
-        .filter((value): value is { label: string; level: number } => value !== null)
-        .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
-        .map(entry => `• ${entry.label} LVL ${entry.level}`)
-        .join('\n') || null;
+        const enchantmentText =
+          toArray(item.enchantments)
+            .map(enchantment => {
+              const enchantmentInfo = getFirstRelation(enchantment.enchantment);
+              if (!enchantmentInfo?.label || !enchantment.level) return null;
+              return { label: enchantmentInfo.label, level: enchantment.level };
+            })
+            .filter((value): value is { label: string; level: number } => value !== null)
+            .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
+            .map(entry => `• ${entry.label} LVL ${entry.level}`)
+            .join('\n') || null;
 
-      const effectText = toArray(item.effects)
-        .map(effect => {
-          const effectInfo = getFirstRelation(effect.effect);
-          if (!effectInfo?.label || !effect.level) return null;
-          return { label: effectInfo.label, level: effect.level };
-        })
-        .filter((value): value is { label: string; level: number } => value !== null)
-        .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
-        .map(entry => `• ${entry.label} LVL ${entry.level}`)
-        .join('\n') || null;
+        const effectText =
+          toArray(item.effects)
+            .map(effect => {
+              const effectInfo = getFirstRelation(effect.effect);
+              if (!effectInfo?.label || !effect.level) return null;
+              return { label: effectInfo.label, level: effect.level };
+            })
+            .filter((value): value is { label: string; level: number } => value !== null)
+            .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
+            .map(entry => `• ${entry.label} LVL ${entry.level}`)
+            .join('\n') || null;
 
-      const fields: { name: string; value: string }[] = [
-        {
-          name: 'Item-Details',
-          value: details.length > 0 ? details.join('\n') : 'Keine Details verfügbar.',
-        },
-      ];
+        const fields: { name: string; value: string }[] = [
+          {
+            name: 'Item-Details',
+            value: details.length > 0 ? details.join('\n') : 'Keine Details verfügbar.',
+          },
+        ];
 
-      if (signatureText) {
-        fields.push({ name: 'Signaturen', value: signatureText });
-      }
+        if (signatureText) {
+          fields.push({ name: 'Signaturen', value: signatureText });
+        }
 
-      if (enchantmentText) {
-        fields.push({ name: 'Verzauberungen', value: enchantmentText });
-      }
+        if (enchantmentText) {
+          fields.push({ name: 'Verzauberungen', value: enchantmentText });
+        }
 
-      if (effectText) {
-        fields.push({ name: 'Effekte', value: effectText });
-      }
+        if (effectText) {
+          fields.push({ name: 'Effekte', value: effectText });
+        }
 
-      const imageInfos = toArray(item.images)
-        .map(image => {
-          if (!image?.path) return null;
-          const { data } = supabase.storage.from(imageBucket).getPublicUrl(image.path);
-          const publicUrl = data?.publicUrl;
-          if (!publicUrl) return null;
-          const type = (image.type ?? 'Bild').trim() || 'Bild';
-          return {
-            type,
-            url: publicUrl,
-          };
-        })
-        .filter((value): value is { type: string; url: string } => value !== null);
+        const imageInfos = (
+          await Promise.all(
+            toArray(item.images).map(async image => {
+              const rawPath = image?.path?.trim();
+              if (!rawPath) return null;
 
-      const embed = new EmbedBuilder()
-        .setTitle(item.name)
-        .setColor(0x2b2d31)
-        .addFields(fields);
+              let objectPath = rawPath.replace(/^\/+/, '');
+              if (objectPath.startsWith(`${imageBucket}/`)) {
+                objectPath = objectPath.slice(imageBucket.length + 1);
+              }
 
-      if (imageInfos.length > 0) {
-        embed.setImage(imageInfos[0].url);
-      }
+              const typeLabel = (image.type ?? 'Bild').trim() || 'Bild';
 
-      const createdAt = item.created_at ? new Date(item.created_at) : null;
-      if (createdAt && !Number.isNaN(createdAt.getTime())) {
-        embed.setTimestamp(createdAt);
-      }
+              const { data: signedData, error: signedError } = await storageBucket.createSignedUrl(
+                objectPath,
+                resolvedSignedUrlTtlSeconds
+              );
 
-      const additionalImageEmbeds = imageInfos.slice(1).map((image, index) =>
-        new EmbedBuilder()
-          .setTitle(`${item.name} — ${image.type.charAt(0).toUpperCase() + image.type.slice(1)} ${index + 2}`)
+              if (signedError) {
+                console.warn('[command:item] Failed to create signed URL', { path: objectPath, error: signedError });
+                const { data: publicData } = storageBucket.getPublicUrl(objectPath);
+                if (!publicData?.publicUrl) {
+                  return null;
+                }
+
+                return {
+                  type: typeLabel,
+                  url: normalizeUrl(publicData.publicUrl),
+                };
+              }
+
+              if (!signedData?.signedUrl) {
+                return null;
+              }
+
+              return {
+                type: typeLabel,
+                url: normalizeUrl(signedData.signedUrl),
+              };
+            })
+          )
+        ).filter((value): value is { type: string; url: string } => value !== null);
+
+        const embed = new EmbedBuilder()
+          .setTitle(item.name)
           .setColor(0x2b2d31)
-          .setImage(image.url)
-      );
+          .addFields(fields);
 
-      return [embed, ...additionalImageEmbeds];
-    });
+        if (imageInfos.length > 0) {
+          embed.setImage(imageInfos[0].url);
+        }
+
+        const createdAt = item.created_at ? new Date(item.created_at) : null;
+        if (createdAt && !Number.isNaN(createdAt.getTime())) {
+          embed.setTimestamp(createdAt);
+        }
+
+        const additionalImageEmbeds = imageInfos.slice(1).map((image, index) =>
+          new EmbedBuilder()
+            .setTitle(`${item.name} — ${image.type.charAt(0).toUpperCase() + image.type.slice(1)} ${index + 2}`)
+            .setColor(0x2b2d31)
+            .setImage(image.url)
+        );
+
+        return [embed, ...additionalImageEmbeds];
+      })
+    );
+
+    const embeds = embedGroups.flat();
 
     const maxEmbeds = embeds.slice(0, 10);
 
