@@ -7,34 +7,9 @@ import {
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { sendModerationMessage } from '../utils/moderation';
+import { formatDuration } from '../utils/time';
 
 const MAX_TIMEOUT_MINUTES = 28 * 24 * 60; // Discord allows up to 28 days
-
-function formatRemainingDuration(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  const days = Math.floor(hours / 24);
-  const remainingHours = hours % 24;
-
-  const parts: string[] = [];
-  if (days > 0) {
-    parts.push(`${days} Tag${days === 1 ? '' : 'e'}`);
-  }
-  if (remainingHours > 0) {
-    parts.push(`${remainingHours} Stunde${remainingHours === 1 ? '' : 'n'}`);
-  }
-  if (minutes > 0) {
-    parts.push(`${minutes} Minute${minutes === 1 ? '' : 'n'}`);
-  }
-  if (parts.length === 0 && seconds > 0) {
-    parts.push(`${seconds} Sekunde${seconds === 1 ? '' : 'n'}`);
-  }
-
-  return parts.join(' ');
-}
 
 function assertGuildMember(member: GuildMember | null): asserts member is GuildMember {
   if (!member) {
@@ -134,7 +109,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const existingMuteUntil = targetMember.communicationDisabledUntilTimestamp;
   if (existingMuteUntil && existingMuteUntil > Date.now()) {
     const remainingMs = existingMuteUntil - Date.now();
-    const formatted = formatRemainingDuration(remainingMs) || 'wenige Sekunden';
+    const formatted = formatDuration(remainingMs) || 'wenige Sekunden';
     const absoluteTimestamp = `<t:${Math.floor(existingMuteUntil / 1000)}:f>`;
     await interaction.reply({
       content: `❌ Dieser Nutzer ist bereits gemutet und bleibt noch für ${formatted} gemutet (endet am ${absoluteTimestamp}).`,
@@ -161,6 +136,20 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     });
     return;
   }
+
+  const muteEndsAt = Date.now() + durationMs;
+  const muteEndSeconds = Math.floor(muteEndsAt / 1000);
+  const formattedDuration = formatDuration(durationMs) || `${minutes} Minute${minutes === 1 ? '' : 'n'}`;
+  const dmLines = [
+    `Du wurdest auf **${guild.name}** stummgeschaltet.`,
+    `Moderation durch: ${interaction.user.tag}`,
+    `Dauer: ${formattedDuration} (endet ${`<t:${muteEndSeconds}:R>`}, ${`<t:${muteEndSeconds}:f>`}).`,
+    `Grund: ${reason}`,
+  ];
+
+  await targetUser
+    .send({ content: dmLines.join('\n') })
+    .catch(() => {});
 
   const responseMessage =
     `<@${interaction.user.id}> hat <@${targetMember.id}> für ${minutes} Minuten gemutet für ${safeReason}.`;

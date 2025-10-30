@@ -14,6 +14,7 @@ import { registerCommands, registerOnGuildJoin, type RegisterMode } from './regi
 import { isUserVerified } from './utils/verification';
 import { getBlocklistRules } from './utils/blocklist';
 import { sendModerationMessage } from './utils/moderation';
+import { formatDuration } from './utils/time';
 
 const token = process.env.DISCORD_TOKEN;
 const appId = process.env.DISCORD_APP_ID;
@@ -308,6 +309,25 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
       }
 
       await sendModerationMessage(guild, lines.join('\n'), { logTag: 'auto-mute' });
+
+      await message
+        .delete()
+        .catch((err) => {
+          console.warn('[blocklist] Failed to delete offending message after auto-mute:', err);
+        });
+
+      const muteEndsAtSeconds = Math.floor((Date.now() + finalDuration) / 1000);
+      const formattedDuration = formatDuration(finalDuration) || `${finalMinutes} Minute${finalMinutes === 1 ? '' : 'n'}`;
+      const dmLines = [
+        `Du wurdest auf **${guild.name}** automatisch stummgeschaltet.`,
+        `Dauer: ${formattedDuration} (endet ${`<t:${muteEndsAtSeconds}:R>`}, ${`<t:${muteEndsAtSeconds}:f>`}).`,
+        `Grund: ${safeReason || 'Kein Grund angegeben'}`,
+      ];
+
+      await message.author
+        .send({ content: dmLines.join('\n') })
+        .catch(() => {});
+
       return;
     }
   });
