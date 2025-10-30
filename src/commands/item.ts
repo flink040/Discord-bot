@@ -157,7 +157,11 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
           })
           .filter((value): value is { label: string; level: number } => value !== null)
           .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
-          .map(entry => `• ${entry.label} LVL ${entry.level}`)
+          .map(entry => {
+            const level = Number(entry.level);
+            const suffix = Number.isNaN(level) || level <= 1 ? '' : ` LVL ${level}`;
+            return `• ${entry.label}${suffix}`;
+          })
           .join('\n') || null;
 
       const fields: { name: string; value: string }[] = [
