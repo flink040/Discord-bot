@@ -30,6 +30,7 @@ No extra "register" step needed.
 | `SUPABASE_ANON_KEY` | ➖ | Optionaler Alternativ-Key, falls nur öffentliche Tabellen gelesen werden. |
 | `MODERATION_CHANNEL_ID` | ➖ | Globale Fallback-Channel-ID für Moderationsmeldungen (z. B. von `/mute`). Kann pro Server mit `/setmoderation` überschrieben werden. |
 | `MODERATION_CHANNEL_STORAGE` | ➖ | Optionales Override: `supabase` erzwingt Supabase-Speicherung, `file` erzwingt die JSON-Datei. Ohne Angabe wird bei vorhandener Supabase-Konfiguration automatisch die Tabelle `guild_settings` (Spalte `moderation_channel_id`) verwendet. |
+| `MARKETPLACE_CHANNEL_STORAGE` | ➖ | Gleiches Prinzip wie oben, aber für den Marktplatzchannel (`guild_settings.marketplace_channel_id` bzw. `config/marketplace-channels.json`). |
 
 \* Pflicht, sofern kein `SUPABASE_ANON_KEY` gesetzt ist.
 
@@ -72,6 +73,13 @@ Die Slash-Commands im Überblick:
 - Stelle sicher, dass der Bot-Prozess Schreibrechte im `config`-Ordner hat, wenn du die Datei-Variante nutzt. Falls kein Eintrag gefunden wird, greift der Bot auf die Umgebungsvariable `MODERATION_CHANNEL_ID` zurück.
 
 > Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
+
+### Marktplatzchannel konfigurieren
+
+- `/init` legt einen Channel mit dem Namen `marktplatz` an (oder verwendet einen vorhandenen) und speichert die Channel-ID serverbezogen. Über die optionale Eingabe `marktplatz_intervall` lässt sich direkt festlegen, wie viele Stunden zwischen zwei Beiträgen desselben Nutzers liegen müssen.
+- Ohne Angabe setzt `/init` den Intervall auf den Standardwert von 24 Stunden, sofern noch kein Wert gespeichert ist.
+- Mit Supabase-Konfiguration landen die Werte automatisch in `guild_settings.marketplace_channel_id` bzw. `guild_settings.marketplace_post_interval_hours`. Ohne Supabase — oder wenn `MARKETPLACE_CHANNEL_STORAGE=file` gesetzt ist — werden `config/marketplace-channels.json` und `config/marketplace-post-intervals.json` verwendet.
+- Setze `MARKETPLACE_CHANNEL_STORAGE=supabase`, falls du Supabase erzwingen möchtest, obwohl die automatische Erkennung nicht greift. Achte bei Dateispeicherung ebenfalls auf Schreibrechte im `config`-Ordner.
 
 ---
 

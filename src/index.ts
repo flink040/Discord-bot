@@ -78,6 +78,7 @@ const client = new Client({
 
 // Load commands
 const commands = loadCommands();
+const commandsWithoutVerification = new Set<string>(['verify', 'init']);
 console.log(`[commands] Loaded: ${Array.from(commands.keys()).join(', ') || '(none)'}`);
 
 // Ready
@@ -111,7 +112,7 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
       return;
     }
 
-    if (interaction.commandName !== 'verify') {
+    if (!commandsWithoutVerification.has(interaction.commandName)) {
       if (!interaction.inGuild() || !interaction.guild) {
         await interaction
           .reply({
