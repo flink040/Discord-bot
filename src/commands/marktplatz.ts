@@ -31,6 +31,7 @@ type ItemRelation<T> = T | T[] | null;
 
 type TradeIntentRow = {
   id: string;
+  item_id: string | number | null;
   intent_type: IntentType;
   quantity: number | string | null;
   price_min: number | string | null;
@@ -130,7 +131,15 @@ function escapeMarkdown(text: string): string {
   return text.replace(/[\\*_`~|\[\]()]/g, match => `\\${match}`);
 }
 
-function buildItemLink(name: string): string {
+function buildItemLink(name: string, itemId?: string | number | null): string {
+  const normalizedId =
+    itemId === null || itemId === undefined ? null : String(itemId).trim();
+
+  if (normalizedId) {
+    const encodedId = encodeURIComponent(normalizedId);
+    return `${ITEM_DB_BASE_URL}/items/${encodedId}?tab=overview`;
+  }
+
   const query = encodeURIComponent(name);
   return `${ITEM_DB_BASE_URL}/search?q=${query}`;
 }
@@ -145,7 +154,7 @@ function formatIntentRow(row: TradeIntentRow): string | null {
   const lines: string[] = [];
   const quantityText = formatQuantity(row.quantity);
   const escapedName = escapeMarkdown(itemName);
-  const link = buildItemLink(itemName);
+  const link = buildItemLink(itemName, row.item_id);
   const headerSuffix = quantityText ? ` · ${quantityText}` : '';
   lines.push(`• **[${escapedName}](${link})**${headerSuffix}`);
 
@@ -262,6 +271,7 @@ async function fetchTradeIntents(
     .from('item_trade_intents')
     .select(
       `id,
+       item_id,
        intent_type,
        quantity,
        price_min,
