@@ -321,7 +321,7 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
       const dmLines = [
         `Du Frechdachs hast auf **${guild.name}** Mist gemacht und bist jetzt stummgeschaltet.`,
         `In den nächsten ${formattedDuration} kannst du darüber nachdenken wie man sich verhalten sollte.`,
-        `Am ${`<t:${muteEndsAtSeconds}:f>`}) kannst du wieder am Geschehnis teilnehmen.`,
+        `Am ${`<t:${muteEndsAtSeconds}:f>`} kannst du wieder am Geschehnis teilnehmen.`,
         `Begründung: ${safeReason || 'Kein Grund angegeben'}`,
       ];
 
