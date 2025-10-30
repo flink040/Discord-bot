@@ -4,11 +4,11 @@ import type { CommandDef } from '../types/Command';
 
 export const data = new SlashCommandBuilder()
   .setName('about')
-  .setDescription('Shows basic info about this bot.');
+  .setDescription('Allgemeine Informationen.');
 
 export const execute = async (interaction: ChatInputCommandInteraction) => {
   await interaction.reply({
-    content: 'OP-Item-DB helper bot — modular and Railway-ready. Use /ping to test availability.',
+    content: 'Der offizielle Discord-Bot von https://op-item-db.com/. Version 0.9',
     flags: MessageFlags.Ephemeral,
   });
 };

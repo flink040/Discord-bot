@@ -10,6 +10,32 @@ import { getModerationChannelId } from '../utils/moderation';
 
 const MAX_TIMEOUT_MINUTES = 28 * 24 * 60; // Discord allows up to 28 days
 
+function formatRemainingDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+
+  const parts: string[] = [];
+  if (days > 0) {
+    parts.push(`${days} Tag${days === 1 ? '' : 'e'}`);
+  }
+  if (remainingHours > 0) {
+    parts.push(`${remainingHours} Stunde${remainingHours === 1 ? '' : 'n'}`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes} Minute${minutes === 1 ? '' : 'n'}`);
+  }
+  if (parts.length === 0 && seconds > 0) {
+    parts.push(`${seconds} Sekunde${seconds === 1 ? '' : 'n'}`);
+  }
+
+  return parts.join(' ');
+}
+
 function assertGuildMember(member: GuildMember | null): asserts member is GuildMember {
   if (!member) {
     throw new Error('Member not found in guild.');
@@ -67,10 +93,6 @@ async function requireModeratorPermission(interaction: MuteCommandInteraction) {
   }
 }
 
-function formatInlineCode(value: string): string {
-  return `\`${value.replace(/`/g, '\\`').replace(/\r?\n|\r/g, ' ')}\``;
-}
-
 async function notifyModerationChannel(interaction: MuteCommandInteraction, message: string) {
   const channelId =
     (await getModerationChannelId(interaction.guild.id)) ?? process.env.MODERATION_CHANNEL_ID;
@@ -95,7 +117,16 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
   const targetUser = interaction.options.getUser('spieler', true);
   const minutes = interaction.options.getInteger('minuten', true);
-  const reason = interaction.options.getString('grund', true).trim();
+  const rawReason = interaction.options.getString('grund', true);
+  const reason = rawReason.replace(/\s+/g, ' ').trim();
+
+  if (!reason) {
+    await interaction.reply({
+      content: '❌ Bitte gib einen gültigen Grund für den Mute an.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
   if (targetUser.id === interaction.user.id) {
     await interaction.reply({
@@ -118,8 +149,25 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     return;
   }
 
+  const existingMuteUntil = targetMember.communicationDisabledUntilTimestamp;
+  if (existingMuteUntil && existingMuteUntil > Date.now()) {
+    const remainingMs = existingMuteUntil - Date.now();
+    const formatted = formatRemainingDuration(remainingMs) || 'wenige Sekunden';
+    const absoluteTimestamp = `<t:${Math.floor(existingMuteUntil / 1000)}:f>`;
+    await interaction.reply({
+      content: `❌ Dieser Nutzer ist bereits gemutet und bleibt noch für ${formatted} gemutet (endet am ${absoluteTimestamp}).`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   const durationMs = minutes * 60 * 1000;
   const auditReason = `${reason} — Ausgeführt von ${interaction.user.tag}`.slice(0, 512);
+
+  const safeReason = reason
+    .replace(/<@!?([0-9]{17,19})>/g, '@$1')
+    .replace(/@everyone/g, '@\u200beveryone')
+    .replace(/@here/g, '@\u200bhere');
 
   try {
     await targetMember.timeout(durationMs, auditReason);
@@ -132,16 +180,16 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     return;
   }
 
-  const confirmation = `✅ ${targetMember.user.tag} wurde für ${minutes} Minuten gemuted.`;
+  const responseMessage =
+    `<@${interaction.user.id}> hat <@${targetMember.id}> für ${minutes} Minuten gemutet für ${safeReason}.`;
   await interaction.reply({
-    content: confirmation,
+    content: responseMessage,
     flags: MessageFlags.Ephemeral,
   });
 
   const logMessage =
-    `${interaction.user.tag} hat ${formatInlineCode(targetMember.user.tag)} ` +
-    `(${formatInlineCode(targetMember.id)}) für ${formatInlineCode(String(minutes))} Minuten ` +
-    `gemuted - ${formatInlineCode(reason)}`;
+    `${interaction.user.toString()} hat <@${targetMember.id}> für ${minutes} Minuten ` +
+    `gemutet für ${safeReason}.`;
   await notifyModerationChannel(interaction, logMessage);
 };
 
