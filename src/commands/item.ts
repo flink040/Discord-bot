@@ -27,6 +27,10 @@ type ItemRow = {
   type: ItemRelation<{ label: string | null; slug: string | null }>;
   chest: ItemRelation<{ label: string | null }>;
   signatures: ItemRelation<{ signer_name: string | null }>;
+  images: ItemRelation<{
+    path: string | null;
+    type: string | null;
+  }>;
   enchantments: ItemRelation<{
     level: number | null;
     enchantment: ItemRelation<{ label: string | null; slug: string | null }>;
@@ -75,6 +79,7 @@ async function fetchItems({
       type:item_types(label, slug),
       chest:chests(label),
       signatures:item_signatures(signer_name),
+      images:item_images(path, type),
       enchantments:item_enchantments(level, enchantment:enchantments(label, slug)),
       effects:item_item_effects(level, effect:item_effects(label, slug))`
     )
@@ -98,6 +103,8 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   await interaction.deferReply();
 
   const name = interaction.options.getString('name');
+  const supabase = getSupabaseClient();
+  const imageBucket = process.env.SUPABASE_ITEM_IMAGE_BUCKET ?? 'item-images';
 
   try {
     const items = await fetchItems({ name });
@@ -106,7 +113,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const embeds = items.map(item => {
+    const embeds = items.flatMap(item => {
       const rarity = getFirstRelation(item.rarity);
       const type = getFirstRelation(item.type);
       const chest = getFirstRelation(item.chest);
@@ -167,20 +174,47 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
         fields.push({ name: 'Effekte', value: effectText });
       }
 
+      const imageInfos = toArray(item.images)
+        .map(image => {
+          if (!image?.path) return null;
+          const { data } = supabase.storage.from(imageBucket).getPublicUrl(image.path);
+          const publicUrl = data?.publicUrl;
+          if (!publicUrl) return null;
+          const type = (image.type ?? 'Bild').trim() || 'Bild';
+          return {
+            type,
+            url: publicUrl,
+          };
+        })
+        .filter((value): value is { type: string; url: string } => value !== null);
+
       const embed = new EmbedBuilder()
         .setTitle(item.name)
         .setColor(0x2b2d31)
         .addFields(fields);
+
+      if (imageInfos.length > 0) {
+        embed.setImage(imageInfos[0].url);
+      }
 
       const createdAt = item.created_at ? new Date(item.created_at) : null;
       if (createdAt && !Number.isNaN(createdAt.getTime())) {
         embed.setTimestamp(createdAt);
       }
 
-      return embed;
+      const additionalImageEmbeds = imageInfos.slice(1).map((image, index) =>
+        new EmbedBuilder()
+          .setTitle(`${item.name} — ${image.type.charAt(0).toUpperCase() + image.type.slice(1)} ${index + 2}`)
+          .setColor(0x2b2d31)
+          .setImage(image.url)
+      );
+
+      return [embed, ...additionalImageEmbeds];
     });
 
-    await interaction.editReply({ embeds });
+    const maxEmbeds = embeds.slice(0, 10);
+
+    await interaction.editReply({ embeds: maxEmbeds });
   } catch (err) {
     console.error('[command:item]', err);
     if (err instanceof Error) {
