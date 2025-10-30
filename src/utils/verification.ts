@@ -1,6 +1,6 @@
 import type { Guild, GuildMember, Role } from 'discord.js';
 
-export const VERIFIED_ROLE_NAME = 'verifiziert';
+export const VERIFIED_ROLE_NAME = '✅Verifiziert';
 
 function normalize(value: string): string {
   return value.normalize('NFKC').toLowerCase();
