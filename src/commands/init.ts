@@ -74,19 +74,20 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const guild = interaction.guild;
-  if (!guild) {
-    await interaction.editReply('❌ Der Server konnte nicht geladen werden. Bitte versuche es erneut.');
-    return;
-  }
+  try {
+    const guild = interaction.guild;
+    if (!guild) {
+      await interaction.editReply('❌ Der Server konnte nicht geladen werden. Bitte versuche es erneut.');
+      return;
+    }
 
-  const me = guild.members.me ?? (await guild.members.fetch(interaction.client.user.id));
-  const requestedMarketplaceInterval = interaction.options.getInteger('marktplatz_intervall');
-  const canManageRoles = me.permissions.has(PermissionFlagsBits.ManageRoles);
-  const canManageChannels = me.permissions.has(PermissionFlagsBits.ManageChannels);
+    const me = guild.members.me ?? (await guild.members.fetch(interaction.client.user.id));
+    const requestedMarketplaceInterval = interaction.options.getInteger('marktplatz_intervall');
+    const canManageRoles = me.permissions.has(PermissionFlagsBits.ManageRoles);
+    const canManageChannels = me.permissions.has(PermissionFlagsBits.ManageChannels);
 
-  const updates: string[] = [];
-  const warnings: string[] = [];
+    const updates: string[] = [];
+    const warnings: string[] = [];
 
   let verifiedRole = findVerifiedRole(guild);
   if (!verifiedRole) {
@@ -311,12 +312,27 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     );
   }
 
-  if (updates.length === 0) {
-    updates.push('ℹ️ Es waren keine Änderungen erforderlich.');
-  }
+    if (updates.length === 0) {
+      updates.push('ℹ️ Es waren keine Änderungen erforderlich.');
+    }
 
-  const response = [...updates, ...warnings].join('\n');
-  await interaction.editReply(response);
+    const response = [...updates, ...warnings].join('\n');
+    await interaction.editReply(response);
+  } catch (error) {
+    console.error('[init] Failed to complete initialization', error);
+    const message =
+      '❌ Beim Initialisieren ist ein unerwarteter Fehler aufgetreten. Bitte versuche es erneut oder kontaktiere das Team.';
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(message).catch(() => {});
+    } else {
+      await interaction
+        .reply({
+          content: message,
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => {});
+    }
+  }
 };
 
 export default { data: data.toJSON(), execute } satisfies CommandDef;
