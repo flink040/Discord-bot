@@ -6,6 +6,7 @@ import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
 const DEFAULT_LIMIT = 3;
+const DEFAULT_SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour
 
 export const data = new SlashCommandBuilder()
   .setName('item')
