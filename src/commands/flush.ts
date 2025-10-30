@@ -7,7 +7,7 @@ import {
   type Message,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
-import { sendModerationMessage } from '../utils/moderation';
+import { getModerationChannelId, sendModerationMessage } from '../utils/moderation';
 
 const MAX_BULK_DELETE_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days in ms
 
