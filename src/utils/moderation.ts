@@ -106,16 +106,33 @@ async function getSupabaseChannel(guildId: string): Promise<string | null> {
   return normalizeChannelId(data?.moderation_channel_id ?? null);
 }
 
-async function setSupabaseChannel(guildId: string, channelId: string | null): Promise<void> {
+function normalizeGuildName(guildName: string | null | undefined): string | null {
+  const trimmed = guildName?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+async function setSupabaseChannel(
+  guildId: string,
+  channelId: string | null,
+  guildName?: string | null,
+): Promise<void> {
   const supabase = getSupabaseClient();
   const timestamp = new Date().toISOString();
+  const normalizedGuildName = normalizeGuildName(guildName);
+
+  const payload: Record<string, string | null> & { updated_at: string; guild_id: string } = {
+    guild_id: guildId,
+    moderation_channel_id: channelId,
+    updated_at: timestamp,
+  };
+
+  if (normalizedGuildName) {
+    payload.locale = normalizedGuildName;
+  }
 
   const { error } = await supabase
     .from('guild_settings')
-    .upsert(
-      { guild_id: guildId, moderation_channel_id: channelId, updated_at: timestamp },
-      { onConflict: 'guild_id' },
-    );
+    .upsert(payload, { onConflict: 'guild_id' });
 
   if (error) {
     throw error;
@@ -142,12 +159,13 @@ export async function getModerationChannelId(guildId: string): Promise<string | 
 export async function setModerationChannelId(
   guildId: string,
   channelId: string | null,
+  guildName?: string | null,
 ): Promise<boolean> {
   const normalized = normalizeChannelId(channelId);
 
   if (determineDriver() === 'supabase') {
     try {
-      await setSupabaseChannel(guildId, normalized);
+      await setSupabaseChannel(guildId, normalized, guildName);
       return true;
     } catch (error) {
       handleSupabaseFailure(error);

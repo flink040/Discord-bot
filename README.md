@@ -66,7 +66,7 @@ Die Slash-Commands im Überblick:
 
 ### Moderationschannel konfigurieren
 
-- Liegt eine Supabase-Konfiguration (`SUPABASE_URL` + Key) vor, speichert `/setmoderation` die Channel-ID automatisch in der Tabelle `guild_settings` unter `moderation_channel_id`.
+- Liegt eine Supabase-Konfiguration (`SUPABASE_URL` + Key) vor, speichert `/setmoderation` die Channel-ID automatisch in der Tabelle `guild_settings` unter `moderation_channel_id` und den Servernamen in der Spalte `locale`.
 - Ohne Supabase (oder wenn `MODERATION_CHANNEL_STORAGE=file` gesetzt ist) landet die Einstellung in `config/moderation-channels.json` auf dem lokalen Dateisystem. Die Datei wird bei Bedarf automatisch angelegt.
 - Setze `MODERATION_CHANNEL_STORAGE=supabase`, falls du Supabase erzwingen möchtest, obwohl die automatische Erkennung nicht greift.
 - Stelle sicher, dass der Bot-Prozess Schreibrechte im `config`-Ordner hat, wenn du die Datei-Variante nutzt. Falls kein Eintrag gefunden wird, greift der Bot auf die Umgebungsvariable `MODERATION_CHANNEL_ID` zurück.
