@@ -6,7 +6,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
-import { getModerationChannelId } from '../utils/moderation';
+import { sendModerationMessage } from '../utils/moderation';
 
 function assertGuildMember(member: GuildMember | null): asserts member is GuildMember {
   if (!member) {
@@ -55,24 +55,6 @@ async function requireBanPermission(interaction: BanCommandInteraction) {
     });
     throw new Error('Missing permission: BanMembers');
   }
-}
-
-async function notifyModerationChannel(interaction: BanCommandInteraction, message: string) {
-  const channelId =
-    (await getModerationChannelId(interaction.guild.id)) ?? process.env.MODERATION_CHANNEL_ID;
-  if (!channelId) {
-    return;
-  }
-
-  const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
-  if (!channel || !channel.isTextBased()) {
-    console.warn('[ban] Konfigurierter Moderationschannel nicht gefunden oder nicht textbasiert.');
-    return;
-  }
-
-  await channel.send({ content: message }).catch((err) => {
-    console.error('[ban] Fehler beim Senden der Moderationsnachricht:', err);
-  });
 }
 
 export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
@@ -131,7 +113,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   });
 
   const logMessage = `${interaction.user.toString()} hat <@${targetMember.id}> gebannt wegen ${reason}.`;
-  await notifyModerationChannel(interaction, logMessage);
+  await sendModerationMessage(interaction.guild, logMessage, { logTag: 'ban' });
 };
 
 export default { data: data.toJSON(), execute } satisfies CommandDef;
