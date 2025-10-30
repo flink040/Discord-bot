@@ -88,6 +88,18 @@ function resolveImageExtension(objectPath: string, mimeType?: string): string {
   return '.png';
 }
 
+function resolveExpiresInSeconds(): number | null {
+  const rawValue = process.env.SUPABASE_ITEM_IMAGE_TTL_SECONDS;
+  if (!rawValue) return null;
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
 async function loadImageAssets(options: {
   item: ItemRow;
   storageBucket: StorageBucketApi;
@@ -99,6 +111,7 @@ async function loadImageAssets(options: {
 
   const assets: ImageAsset[] = [];
   const images = toArray(item.images);
+  const expiresInOverride = resolveExpiresInSeconds();
 
   for (let index = 0; index < images.length && assets.length < max; index += 1) {
     const image = images[index];
@@ -111,18 +124,35 @@ async function loadImageAssets(options: {
     }
 
     try {
-      const { data, error } = await storageBucket.download(objectPath);
-      if (error || !data) {
-        console.warn('[command:item] Failed to download image', { path: objectPath, error });
+      const { data: signedData, error: signedError } = await storageBucket.createSignedUrl(
+        objectPath,
+        expiresInOverride ?? 60
+      );
+
+      if (signedError || !signedData?.signedUrl) {
+        console.warn('[command:item] Failed to create signed image URL', {
+          path: objectPath,
+          error: signedError,
+        });
         continue;
       }
 
-      const blob = data as Blob;
-      const arrayBuffer = await blob.arrayBuffer();
+      const response = await fetch(signedData.signedUrl);
+      if (!response.ok) {
+        console.warn('[command:item] Failed to download image', {
+          path: objectPath,
+          status: response.status,
+          statusText: response.statusText,
+        });
+        continue;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
 
       const typeLabel = (image?.type ?? 'Bild').trim() || 'Bild';
-      const extension = resolveImageExtension(objectPath, blob.type);
+      const mimeType = response.headers.get('content-type') ?? undefined;
+      const extension = resolveImageExtension(objectPath, mimeType);
       const attachmentName = `${item.id}-${assets.length + 1}${extension}`;
 
       assets.push({
@@ -131,7 +161,7 @@ async function loadImageAssets(options: {
         attachment: new AttachmentBuilder(buffer, { name: attachmentName }),
       });
     } catch (error) {
-      console.warn('[command:item] Unexpected error while preparing image', { error });
+      console.warn('[command:item] Unexpected error while preparing image', { error, path: objectPath });
     }
   }
 
