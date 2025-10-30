@@ -483,9 +483,9 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     );
   }
 
-  if (updates.length === 0) {
-    updates.push('ℹ️ Es waren keine Änderungen erforderlich.');
-  }
+    if (updates.length === 0) {
+      updates.push('ℹ️ Es waren keine Änderungen erforderlich.');
+    }
 
   const response = [...updates, ...warnings].join('\n');
   await interaction.editReply(response);
