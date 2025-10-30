@@ -187,7 +187,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
         .setTitle(item.name)
         .setColor(0x2b2d31)
         .addFields(fields)
-        .setDescription(`[Mehr Anzeigen](https://op-item-db.com/item/${item.id})`);
+        .setDescription(`[Mehr Anzeigen](https://op-item-db.com/items/${item.id})`);
 
       const createdAt = item.created_at ? new Date(item.created_at) : null;
       if (createdAt && !Number.isNaN(createdAt.getTime())) {
