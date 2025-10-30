@@ -62,7 +62,11 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     return;
   }
 
-  const success = await setModerationChannelId(interaction.guildId, channel.id);
+  const success = await setModerationChannelId(
+    interaction.guildId,
+    channel.id,
+    interaction.guild.name,
+  );
 
   if (!success) {
     await interaction.reply({
