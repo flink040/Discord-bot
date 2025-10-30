@@ -67,6 +67,10 @@ async function requireModeratorPermission(interaction: MuteCommandInteraction) {
   }
 }
 
+function formatInlineCode(value: string): string {
+  return `\`${value.replace(/`/g, '\\`').replace(/\r?\n|\r/g, ' ')}\``;
+}
+
 async function notifyModerationChannel(interaction: MuteCommandInteraction, message: string) {
   const channelId =
     (await getModerationChannelId(interaction.guild.id)) ?? process.env.MODERATION_CHANNEL_ID;
@@ -134,7 +138,10 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     flags: MessageFlags.Ephemeral,
   });
 
-  const logMessage = `${interaction.user.tag} hat ${targetMember.user.tag} für ${minutes} Minuten gemuted - ${reason}`;
+  const logMessage =
+    `${interaction.user.tag} hat ${formatInlineCode(targetMember.user.tag)} ` +
+    `(${formatInlineCode(targetMember.id)}) für ${formatInlineCode(String(minutes))} Minuten ` +
+    `gemuted - ${formatInlineCode(reason)}`;
   await notifyModerationChannel(interaction, logMessage);
 };
 
