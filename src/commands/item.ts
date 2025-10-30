@@ -1,4 +1,4 @@
-import { EmbedBuilder, SlashCommandBuilder, time, type ChatInputCommandInteraction } from 'discord.js';
+import { EmbedBuilder, SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
@@ -51,7 +51,6 @@ function toArray<T>(relation: ItemRelation<T>): T[] {
 }
 
 function formatStars(stars: number): string {
-  if (stars <= 0) return 'Keine Sterne';
   const starCount = Math.min(stars, 10);
   return `${'★'.repeat(starCount)}${stars > starCount ? ` (+${stars - starCount})` : ''}`;
 }
@@ -115,16 +114,10 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       const details: string[] = [];
       if (type?.label) details.push(`**Item-Typ:** ${type.label}`);
       if (rarity?.label) details.push(`**Seltenheit:** ${rarity.label}`);
-      details.push(`**Sterne:** ${formatStars(item.stars)}`);
+      if (item.stars > 0) details.push(`**Sterne:** ${formatStars(item.stars)}`);
       if (item.material) details.push(`**Material:** ${item.material}`);
       if (item.origin) details.push(`**Herkunft:** ${item.origin}`);
       if (chest?.label) details.push(`**Truhe:** ${chest.label}`);
-      if (item.created_at) {
-        const createdAt = new Date(item.created_at);
-        if (!Number.isNaN(createdAt.getTime())) {
-          details.push(`**Erstellt:** ${time(createdAt, 'R')}`);
-        }
-      }
 
       const signatureText = toArray(item.signatures)
         .map(signature => signature?.signer_name?.trim())
@@ -155,27 +148,29 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
         .map(entry => `• ${entry.label} LVL ${entry.level}`)
         .join('\n') || null;
 
+      const fields: { name: string; value: string }[] = [
+        {
+          name: 'Item-Details',
+          value: details.length > 0 ? details.join('\n') : 'Keine Details verfügbar.',
+        },
+      ];
+
+      if (signatureText) {
+        fields.push({ name: 'Signaturen', value: signatureText });
+      }
+
+      if (enchantmentText) {
+        fields.push({ name: 'Verzauberungen', value: enchantmentText });
+      }
+
+      if (effectText) {
+        fields.push({ name: 'Effekte', value: effectText });
+      }
+
       const embed = new EmbedBuilder()
         .setTitle(item.name)
         .setColor(0x2b2d31)
-        .addFields(
-          {
-            name: 'Item-Details',
-            value: details.join('\n') || 'Keine Details verfügbar.',
-          },
-          {
-            name: 'Signaturen',
-            value: signatureText ?? 'Keine Signaturen vermerkt.',
-          },
-          {
-            name: 'Verzauberungen',
-            value: enchantmentText ?? 'Keine Verzauberungen vermerkt.',
-          },
-          {
-            name: 'Effekte',
-            value: effectText ?? 'Keine Effekte vermerkt.',
-          }
-        );
+        .addFields(fields);
 
       const createdAt = item.created_at ? new Date(item.created_at) : null;
       if (createdAt && !Number.isNaN(createdAt.getTime())) {
