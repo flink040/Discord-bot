@@ -1,7 +1,15 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
+  ChannelSelectMenuBuilder,
+  ChannelSelectMenuInteraction,
   ChannelType,
   ChatInputCommandInteraction,
+  ComponentType,
   GuildBasedChannel,
+  MessageComponentInteraction,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -243,31 +251,194 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     }
   }
 
-  if (!marketplaceChannel) {
-    if (!canManageChannels) {
-      warnings.push(
-        '⚠️ Ich konnte keinen Marktplatzchannel anlegen, da mir die Berechtigung **Kanäle verwalten** fehlt.',
-      );
-    } else {
-      try {
-        const created = await guild.channels.create({
-          name: MARKETPLACE_CHANNEL_NAME,
-          type: ChannelType.GuildText,
-          reason: 'Initial server setup via /init',
-        });
+  let shouldCreateMarketplaceChannel = false;
 
-        marketplaceChannel = created;
-        const stored = await setMarketplaceChannelId(guild.id, created.id, guild.name);
-        if (stored) {
-          updates.push(`✅ Der Marktplatzchannel ${created} wurde erstellt und gespeichert.`);
+  if (!marketplaceChannel) {
+    const channelSelectRow = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
+      new ChannelSelectMenuBuilder()
+        .setCustomId('init-marketplace-select')
+        .setPlaceholder('Wähle einen Channel für den Marktplatz')
+        .setMinValues(1)
+        .setMaxValues(1)
+        .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
+    );
+
+    const filter = (componentInteraction: MessageComponentInteraction) =>
+      componentInteraction.user.id === interaction.user.id;
+
+    if (canManageChannels) {
+      const promptMessage = await interaction.followUp({
+        content: 'Soll ich einen neuen Marktplatzchannel erstellen?',
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId('init-marketplace-create')
+              .setLabel('Ja, bitte erstellen')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId('init-marketplace-use-existing')
+              .setLabel('Nein, bestehenden wählen')
+              .setStyle(ButtonStyle.Secondary),
+          ),
+        ],
+        ephemeral: true,
+      });
+
+      try {
+        const choice = (await promptMessage.awaitMessageComponent({
+          componentType: ComponentType.Button,
+          filter,
+          time: 60_000,
+        })) as ButtonInteraction;
+
+        if (choice.customId === 'init-marketplace-create') {
+          shouldCreateMarketplaceChannel = true;
+          await choice.update({ content: 'Alles klar, ich erstelle einen neuen Marktplatzchannel …', components: [] });
         } else {
-          warnings.push('⚠️ Der neue Marktplatzchannel konnte nicht gespeichert werden.');
+          await choice.update({
+            content: 'Bitte wähle einen bestehenden Channel für den Marktplatz aus.',
+            components: [channelSelectRow],
+          });
+
+          try {
+            const selection = (await promptMessage.awaitMessageComponent({
+              componentType: ComponentType.ChannelSelect,
+              filter,
+              time: 60_000,
+            })) as ChannelSelectMenuInteraction;
+
+            const selectedChannelId = selection.values[0];
+            const selectedChannel =
+              guild.channels.cache.get(selectedChannelId) ??
+              (await guild.channels.fetch(selectedChannelId));
+
+            if (isSupportedGuildTextChannel(selectedChannel)) {
+              marketplaceChannel = selectedChannel;
+              const stored = await setMarketplaceChannelId(guild.id, selectedChannel.id, guild.name);
+
+              if (stored) {
+                updates.push(`✅ Marktplatz-Einträge werden nun in ${selectedChannel} veröffentlicht.`);
+              } else {
+                warnings.push('⚠️ Der ausgewählte Marktplatzchannel konnte nicht gespeichert werden.');
+              }
+
+              await selection.update({
+                content: marketplaceChannel
+                  ? `✅ ${marketplaceChannel} wird als Marktplatzchannel verwendet.`
+                  : '✅ Channel gespeichert.',
+                components: [],
+              });
+            } else {
+              await selection.update({
+                content:
+                  '⚠️ Der ausgewählte Channel ist kein Textchannel. Bitte führe /init erneut aus, um einen gültigen Channel zu wählen.',
+                components: [],
+              });
+              warnings.push('⚠️ Es wurde kein gültiger Marktplatzchannel ausgewählt.');
+            }
+          } catch (selectionError) {
+            console.warn('[init] No marketplace channel selected', selectionError);
+            await promptMessage.edit({
+              content:
+                '⚠️ Es wurde kein Channel ausgewählt. Du kannst /init erneut ausführen, um einen Marktplatzchannel festzulegen.',
+              components: [],
+            });
+            warnings.push(
+              '⚠️ Es wurde kein Channel ausgewählt. Du kannst /init erneut ausführen, um einen Marktplatzchannel festzulegen.',
+            );
+          }
         }
-      } catch (error) {
-        console.error('[init] Failed to create marketplace channel', error);
-        warnings.push('⚠️ Beim Erstellen des Marktplatzchannels ist ein Fehler aufgetreten.');
+      } catch (choiceError) {
+        console.warn('[init] No choice made for marketplace channel', choiceError);
+        await promptMessage.edit({
+          content:
+            '⚠️ Es wurde keine Auswahl getroffen. Du kannst /init erneut ausführen, um einen Marktplatzchannel festzulegen.',
+          components: [],
+        });
+        warnings.push(
+          '⚠️ Es wurde keine Auswahl getroffen. Du kannst /init erneut ausführen, um einen Marktplatzchannel festzulegen.',
+        );
+      }
+    } else {
+      const promptMessage = await interaction.followUp({
+        content:
+          'Ich kann keinen neuen Marktplatzchannel erstellen, da mir die Berechtigung **Kanäle verwalten** fehlt. Bitte wähle einen bestehenden Channel.',
+        components: [channelSelectRow],
+        ephemeral: true,
+      });
+
+      try {
+        const selection = (await promptMessage.awaitMessageComponent({
+          componentType: ComponentType.ChannelSelect,
+          filter,
+          time: 60_000,
+        })) as ChannelSelectMenuInteraction;
+
+        const selectedChannelId = selection.values[0];
+        const selectedChannel =
+          guild.channels.cache.get(selectedChannelId) ?? (await guild.channels.fetch(selectedChannelId));
+
+        if (isSupportedGuildTextChannel(selectedChannel)) {
+          marketplaceChannel = selectedChannel;
+          const stored = await setMarketplaceChannelId(guild.id, selectedChannel.id, guild.name);
+
+          if (stored) {
+            updates.push(`✅ Marktplatz-Einträge werden nun in ${selectedChannel} veröffentlicht.`);
+          } else {
+            warnings.push('⚠️ Der ausgewählte Marktplatzchannel konnte nicht gespeichert werden.');
+          }
+
+          await selection.update({
+            content: marketplaceChannel
+              ? `✅ ${marketplaceChannel} wird als Marktplatzchannel verwendet.`
+              : '✅ Channel gespeichert.',
+            components: [],
+          });
+        } else {
+          await selection.update({
+            content:
+              '⚠️ Der ausgewählte Channel ist kein Textchannel. Bitte führe /init erneut aus, um einen gültigen Channel zu wählen.',
+            components: [],
+          });
+          warnings.push('⚠️ Es wurde kein gültiger Marktplatzchannel ausgewählt.');
+        }
+      } catch (selectionError) {
+        console.warn('[init] No marketplace channel selected (no permissions)', selectionError);
+        await promptMessage.edit({
+          content:
+            '⚠️ Es wurde kein Channel ausgewählt. Bitte führe /init erneut aus oder erteile mir die benötigten Berechtigungen.',
+          components: [],
+        });
+        warnings.push(
+          '⚠️ Es wurde kein Channel ausgewählt. Bitte führe /init erneut aus oder erteile mir die benötigten Berechtigungen.',
+        );
       }
     }
+  }
+
+  if (!marketplaceChannel && shouldCreateMarketplaceChannel) {
+    try {
+      const created = await guild.channels.create({
+        name: MARKETPLACE_CHANNEL_NAME,
+        type: ChannelType.GuildText,
+        reason: 'Initial server setup via /init',
+      });
+
+      marketplaceChannel = created;
+      const stored = await setMarketplaceChannelId(guild.id, created.id, guild.name);
+      if (stored) {
+        updates.push(`✅ Der Marktplatzchannel ${created} wurde erstellt und gespeichert.`);
+      } else {
+        warnings.push('⚠️ Der neue Marktplatzchannel konnte nicht gespeichert werden.');
+      }
+    } catch (error) {
+      console.error('[init] Failed to create marketplace channel', error);
+      warnings.push('⚠️ Beim Erstellen des Marktplatzchannels ist ein Fehler aufgetreten.');
+    }
+  } else if (!marketplaceChannel && !shouldCreateMarketplaceChannel) {
+    warnings.push(
+      '⚠️ Es wurde kein Marktplatzchannel eingerichtet. Du kannst /init erneut ausführen, um dies nachzuholen.',
+    );
   }
 
   if (marketplaceChannel) {
@@ -316,8 +487,8 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
       updates.push('ℹ️ Es waren keine Änderungen erforderlich.');
     }
 
-    const response = [...updates, ...warnings].join('\n');
-    await interaction.editReply(response);
+  const response = [...updates, ...warnings].join('\n');
+  await interaction.editReply(response);
   } catch (error) {
     console.error('[init] Failed to complete initialization', error);
     const message =
