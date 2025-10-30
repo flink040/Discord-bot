@@ -67,10 +67,6 @@ async function requireModeratorPermission(interaction: MuteCommandInteraction) {
   }
 }
 
-function formatInlineCode(value: string): string {
-  return `\`${value.replace(/`/g, '\\`').replace(/\r?\n|\r/g, ' ')}\``;
-}
-
 async function notifyModerationChannel(interaction: MuteCommandInteraction, message: string) {
   const channelId =
     (await getModerationChannelId(interaction.guild.id)) ?? process.env.MODERATION_CHANNEL_ID;
@@ -95,7 +91,16 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
   const targetUser = interaction.options.getUser('spieler', true);
   const minutes = interaction.options.getInteger('minuten', true);
-  const reason = interaction.options.getString('grund', true).trim();
+  const rawReason = interaction.options.getString('grund', true);
+  const reason = rawReason.replace(/\s+/g, ' ').trim();
+
+  if (!reason) {
+    await interaction.reply({
+      content: '❌ Bitte gib einen gültigen Grund für den Mute an.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
   if (targetUser.id === interaction.user.id) {
     await interaction.reply({
@@ -121,6 +126,11 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const durationMs = minutes * 60 * 1000;
   const auditReason = `${reason} — Ausgeführt von ${interaction.user.tag}`.slice(0, 512);
 
+  const safeReason = reason
+    .replace(/<@!?([0-9]{17,19})>/g, '@$1')
+    .replace(/@everyone/g, '@\u200beveryone')
+    .replace(/@here/g, '@\u200bhere');
+
   try {
     await targetMember.timeout(durationMs, auditReason);
   } catch (error) {
@@ -132,16 +142,16 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     return;
   }
 
-  const confirmation = `✅ ${targetMember.user.tag} wurde für ${minutes} Minuten gemuted.`;
+  const responseMessage =
+    `<@${interaction.user.id}> hat <@${targetMember.id}> für ${minutes} Minuten gemutet für ${safeReason}.`;
   await interaction.reply({
-    content: confirmation,
+    content: responseMessage,
     flags: MessageFlags.Ephemeral,
   });
 
   const logMessage =
-    `${interaction.user.tag} hat ${formatInlineCode(targetMember.user.tag)} ` +
-    `(${formatInlineCode(targetMember.id)}) für ${formatInlineCode(String(minutes))} Minuten ` +
-    `gemuted - ${formatInlineCode(reason)}`;
+    `${interaction.user.toString()} hat <@${targetMember.id}> für ${minutes} Minuten ` +
+    `gemutet für ${safeReason}.`;
   await notifyModerationChannel(interaction, logMessage);
 };
 
