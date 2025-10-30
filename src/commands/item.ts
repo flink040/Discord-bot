@@ -95,16 +95,34 @@ function resolveObjectPathCandidates(rawPath: string, bucket: string): string[] 
   const tryPushWithVariants = (value: string) => {
     pushCandidate(value);
 
-    if (trimmedBucket && value.startsWith(`${trimmedBucket}/`)) {
-      pushCandidate(value.slice(trimmedBucket.length + 1));
+    if (trimmedBucket) {
+      if (value.startsWith(`${trimmedBucket}/`)) {
+        pushCandidate(value.slice(trimmedBucket.length + 1));
+      } else {
+        pushCandidate(`${trimmedBucket}/${value}`);
+      }
     }
 
     if (value.startsWith('public/')) {
       const withoutPublic = value.slice('public/'.length);
       pushCandidate(withoutPublic);
 
-      if (trimmedBucket && withoutPublic.startsWith(`${trimmedBucket}/`)) {
-        pushCandidate(withoutPublic.slice(trimmedBucket.length + 1));
+      if (trimmedBucket) {
+        if (withoutPublic.startsWith(`${trimmedBucket}/`)) {
+          pushCandidate(withoutPublic.slice(trimmedBucket.length + 1));
+        } else {
+          pushCandidate(`${trimmedBucket}/${withoutPublic}`);
+        }
+      }
+    } else {
+      pushCandidate(`public/${value}`);
+
+      if (trimmedBucket) {
+        if (value.startsWith(`${trimmedBucket}/`)) {
+          pushCandidate(`public/${value.slice(trimmedBucket.length + 1)}`);
+        } else {
+          pushCandidate(`public/${trimmedBucket}/${value}`);
+        }
       }
     }
   };
