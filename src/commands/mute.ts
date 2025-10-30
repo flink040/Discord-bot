@@ -141,7 +141,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const muteEndSeconds = Math.floor(muteEndsAt / 1000);
   const formattedDuration = formatDuration(durationMs) || `${minutes} Minute${minutes === 1 ? '' : 'n'}`;
   const dmLines = [
-    `Du wurdest auf **${guild.name}** stummgeschaltet.`,
+    `Du Frechdachs hast auf **${guild.name}** Mist gemacht und bist jetzt stummgeschaltet.`,
     `Moderation durch: ${interaction.user.tag}`,
     `Dauer: ${formattedDuration} (endet ${`<t:${muteEndSeconds}:R>`}, ${`<t:${muteEndSeconds}:f>`}).`,
     `Grund: ${reason}`,
