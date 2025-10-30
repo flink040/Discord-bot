@@ -114,7 +114,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const auditReason = `${reason} — Ausgeführt von ${interaction.user.tag}`.slice(0, 512);
 
   try {
-    await targetMember.ban({ deleteMessageDays: 0, reason: auditReason });
+    await targetMember.ban({ deleteMessageSeconds: 0, reason: auditReason });
   } catch (error) {
     console.error('[ban] Fehler beim Bann:', error);
     await interaction.reply({
