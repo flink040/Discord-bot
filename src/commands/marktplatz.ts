@@ -313,7 +313,6 @@ function buildEmbed(
 
   const embed = new EmbedBuilder()
     .setColor(0x2b2d31)
-    .setTitle(`Marktplatz von ${username}`)
     .setTimestamp(new Date());
 
   let hasContent = false;
@@ -326,7 +325,7 @@ function buildEmbed(
     chunks.forEach((chunk, index) => {
       hasContent = true;
       const suffix = chunks.length > 1 ? ` (Teil ${index + 1})` : '';
-      embed.addFields({ name: `Verkaufe${suffix}`, value: chunk });
+      embed.addFields({ name: `💸 Verkaufe${suffix}`, value: chunk });
     });
   }
 
@@ -338,7 +337,7 @@ function buildEmbed(
     chunks.forEach((chunk, index) => {
       hasContent = true;
       const suffix = chunks.length > 1 ? ` (Teil ${index + 1})` : '';
-      embed.addFields({ name: `Suche${suffix}`, value: chunk });
+      embed.addFields({ name: `🔍 Suche${suffix}`, value: chunk });
     });
   }
 
