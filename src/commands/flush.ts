@@ -7,6 +7,7 @@ import {
   type Message,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
+import { sendModerationMessage } from '../utils/moderation';
 
 const MAX_BULK_DELETE_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days in ms
 
@@ -128,30 +129,64 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 
   const channel = interaction.channel as GuildTextBasedChannel;
+  const moderationChannelId =
+    (interaction.guildId && (await getModerationChannelId(interaction.guildId))) ??
+    process.env.MODERATION_CHANNEL_ID;
+
+  if (moderationChannelId && channel.id === moderationChannelId) {
+    await interaction.reply({
+      content: 'Dieser Befehl kann nicht im Moderationschannel verwendet werden.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const sub = interaction.options.getSubcommand();
   let result: DeleteResult = { deleted: 0, skippedOld: 0 };
+  let moderationLog: string | null = null;
+  const executor = interaction.user.toString();
+  const channelMention = channel.toString();
 
   if (sub === 'all') {
     result = await deleteMessages(channel, () => true);
+    moderationLog =
+      `${executor} hat in ${channelMention} den Chat geleert ` +
+      `und ${result.deleted} Nachrichten gelöscht.`;
   } else if (sub === 'minutes') {
     const minutes = interaction.options.getInteger('dauer', true);
     const cutoff = Date.now() - minutes * 60_000;
     result = await deleteMessages(channel, msg => msg.createdTimestamp >= cutoff);
+    moderationLog =
+      `${executor} hat in ${channelMention} den Chat für ${minutes} Minuten gelöscht ` +
+      `und ${result.deleted} Nachrichten entfernt.`;
   } else if (sub === 'user') {
     const target = interaction.options.getUser('ziel', true);
     const minutes = interaction.options.getInteger('dauer', true);
     const cutoff = Date.now() - minutes * 60_000;
     result = await deleteMessages(channel, msg => msg.author?.id === target.id && msg.createdTimestamp >= cutoff);
+    moderationLog =
+      `${executor} hat in ${channelMention} Nachrichten von ${target.toString()} ` +
+      `aus den letzten ${minutes} Minuten gelöscht und ${result.deleted} Nachrichten entfernt.`;
   }
 
   let response = `✅ Es wurden ${result.deleted} Nachrichten gelöscht.`;
   if (result.skippedOld > 0) {
-    response += ` ${result.skippedOld} Nachrichten waren älter als 14 Tage oder angepinnt und konnten nicht entfernt werden.`;
+    const skippedInfo =
+      ` ${result.skippedOld} Nachrichten waren älter als 14 Tage oder angepinnt und konnten nicht entfernt werden.`;
+    response += skippedInfo;
+    if (moderationLog) {
+      moderationLog += skippedInfo;
+    }
   }
 
   await interaction.editReply(response);
+
+  const guild = interaction.guild;
+  if (guild && moderationLog) {
+    await sendModerationMessage(guild, moderationLog, { logTag: 'flush' });
+  }
 };
 
 export default { data: data.toJSON(), execute } satisfies CommandDef;
