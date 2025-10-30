@@ -1,6 +1,4 @@
-import { AttachmentBuilder, EmbedBuilder, SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
-import { Buffer } from 'node:buffer';
-import path from 'node:path';
+import { EmbedBuilder, SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
@@ -67,26 +65,8 @@ type StorageBucketApi = ReturnType<SupabaseClient['storage']['from']>;
 
 type ImageAsset = {
   type: string;
-  attachment: AttachmentBuilder;
-  attachmentName: string;
+  url: string;
 };
-
-function resolveImageExtension(objectPath: string, mimeType?: string): string {
-  const ext = path.extname(objectPath);
-  if (ext) {
-    return ext.startsWith('.') ? ext : `.${ext}`;
-  }
-
-  if (mimeType) {
-    if (mimeType.includes('png')) return '.png';
-    if (mimeType.includes('jpeg')) return '.jpg';
-    if (mimeType.includes('jpg')) return '.jpg';
-    if (mimeType.includes('gif')) return '.gif';
-    if (mimeType.includes('webp')) return '.webp';
-  }
-
-  return '.png';
-}
 
 function resolveExpiresInSeconds(): number | null {
   const rawValue = process.env.SUPABASE_ITEM_IMAGE_TTL_SECONDS;
@@ -162,7 +142,7 @@ async function loadImageAssets(options: {
 
   const assets: ImageAsset[] = [];
   const images = toArray(item.images);
-  const expiresInOverride = resolveExpiresInSeconds();
+  const expiresInOverride = resolveExpiresInSeconds() ?? DEFAULT_SIGNED_URL_TTL_SECONDS;
 
   for (let index = 0; index < images.length && assets.length < max; index += 1) {
     const image = images[index];
@@ -178,7 +158,7 @@ async function loadImageAssets(options: {
       try {
         const { data: signedData, error: signedError } = await storageBucket.createSignedUrl(
           candidate,
-          expiresInOverride ?? 60
+          expiresInOverride
         );
 
         if (signedError || !signedData?.signedUrl) {
@@ -206,36 +186,12 @@ async function loadImageAssets(options: {
       continue;
     }
 
-    try {
-      const response = await fetch(selectedSignedUrl.url);
-      if (!response.ok) {
-        console.warn('[command:item] Failed to download image', {
-          path: selectedSignedUrl.objectPath,
-          status: response.status,
-          statusText: response.statusText,
-        });
-        continue;
-      }
+    const typeLabel = (image?.type ?? 'Bild').trim() || 'Bild';
 
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      const typeLabel = (image?.type ?? 'Bild').trim() || 'Bild';
-      const mimeType = response.headers.get('content-type') ?? undefined;
-      const extension = resolveImageExtension(selectedSignedUrl.objectPath, mimeType);
-      const attachmentName = `${item.id}-${assets.length + 1}${extension}`;
-
-      assets.push({
-        type: typeLabel,
-        attachmentName,
-        attachment: new AttachmentBuilder(buffer, { name: attachmentName }),
-      });
-    } catch (error) {
-      console.warn('[command:item] Unexpected error while preparing image', {
-        error,
-        path: selectedSignedUrl.objectPath,
-      });
-    }
+    assets.push({
+      type: typeLabel,
+      url: selectedSignedUrl.url,
+    });
   }
 
   return assets;
@@ -296,8 +252,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const embedEntries: Array<{ embed: EmbedBuilder; attachment?: AttachmentBuilder }> = [];
-    let attachmentsRemaining = 10;
+    const embeds: EmbedBuilder[] = [];
     let embedsRemaining = 10;
 
     for (const item of items) {
@@ -376,15 +331,10 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
         embed.setTimestamp(createdAt);
       }
 
-      const entry: { embed: EmbedBuilder; attachment?: AttachmentBuilder } = { embed };
-      embedEntries.push(entry);
+      embeds.push(embed);
       embedsRemaining -= 1;
 
-      if (attachmentsRemaining <= 0 || embedsRemaining < 0) {
-        continue;
-      }
-
-      const maxImagesForItem = Math.min(attachmentsRemaining, 1 + embedsRemaining);
+      const maxImagesForItem = embedsRemaining + 1;
       if (maxImagesForItem <= 0) {
         continue;
       }
@@ -402,32 +352,26 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
       const [firstAsset, ...restAssets] = imageAssets;
       if (firstAsset) {
-        entry.attachment = firstAsset.attachment;
-        embed.setImage(`attachment://${firstAsset.attachmentName}`);
-        attachmentsRemaining -= 1;
+        embed.setImage(firstAsset.url);
       }
 
       let additionalIndex = 2;
       for (const asset of restAssets) {
-        if (attachmentsRemaining <= 0 || embedsRemaining <= 0) break;
+        if (embedsRemaining <= 0) break;
 
         const label = asset.type.charAt(0).toUpperCase() + asset.type.slice(1);
         const imageEmbed = new EmbedBuilder()
           .setTitle(`${item.name} — ${label} ${additionalIndex}`)
           .setColor(0x2b2d31)
-          .setImage(`attachment://${asset.attachmentName}`);
+          .setImage(asset.url);
 
-        embedEntries.push({ embed: imageEmbed, attachment: asset.attachment });
-        attachmentsRemaining -= 1;
+        embeds.push(imageEmbed);
         embedsRemaining -= 1;
         additionalIndex += 1;
       }
     }
 
-    const embeds = embedEntries.map(entry => entry.embed);
-    const files = embedEntries.flatMap(entry => (entry.attachment ? [entry.attachment] : []));
-
-    await interaction.editReply(files.length > 0 ? { embeds, files } : { embeds });
+    await interaction.editReply({ embeds });
   } catch (err) {
     console.error('[command:item]', err);
     if (err instanceof Error) {
