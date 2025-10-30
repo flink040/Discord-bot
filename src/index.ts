@@ -1,10 +1,19 @@
 
 import 'dotenv/config';
-import { Client, Events, GatewayIntentBits, Interaction, MessageFlags } from 'discord.js';
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  Interaction,
+  MessageFlags,
+  PermissionFlagsBits,
+} from 'discord.js';
 import { startHttpServer } from './http';
 import { loadCommands } from './commands/_loader';
 import { registerCommands, registerOnGuildJoin, type RegisterMode } from './registry';
 import { isUserVerified } from './utils/verification';
+import { getBlocklistRules } from './utils/blocklist';
+import { sendModerationMessage } from './utils/moderation';
 
 const token = process.env.DISCORD_TOKEN;
 const appId = process.env.DISCORD_APP_ID;
@@ -22,8 +31,12 @@ function normalizeIntentName(name: string): string {
 }
 
 function resolveGatewayIntents(envValue: string | undefined) {
-  const baseIntent = GatewayIntentBits.Guilds;
-  const resolved = new Set<number>([baseIntent]);
+  const defaultIntents = [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ];
+  const resolved = new Set<number>(defaultIntents);
   const unknown: string[] = [];
 
   if (envValue) {
@@ -80,6 +93,21 @@ const client = new Client({
 const commands = loadCommands();
 const commandsWithoutVerification = new Set<string>(['verify', 'init']);
 console.log(`[commands] Loaded: ${Array.from(commands.keys()).join(', ') || '(none)'}`);
+
+function sanitizeForLog(input: string): string {
+  return input
+    .replace(/<@!?([0-9]{17,19})>/g, '@$1')
+    .replace(/<@&([0-9]{17,19})>/g, '@&$1')
+    .replace(/@everyone/g, '@\u200beveryone')
+    .replace(/@here/g, '@\u200bhere');
+}
+
+function formatQuoted(text: string): string {
+  if (!text) return '';
+  const sanitized = sanitizeForLog(text);
+  const truncated = sanitized.length > 500 ? `${sanitized.slice(0, 497)}…` : sanitized;
+  return truncated.split(/\r?\n/).map((line) => `> ${line || ' '}`).join('\n');
+}
 
 // Ready
 client.once(Events.ClientReady, async (c) => {
@@ -171,6 +199,90 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
           .catch(() => {});
       }
     }
+  }
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  if (!message.inGuild() || message.author.bot || message.system) {
+    return;
+  }
+
+  const content = message.content ?? '';
+  if (!content.trim()) {
+    return;
+  }
+
+  const rules = await getBlocklistRules();
+  if (rules.length === 0) {
+    return;
+  }
+
+  for (const rule of rules) {
+    try {
+      rule.regex.lastIndex = 0;
+      if (!rule.regex.test(content)) {
+        continue;
+      }
+    } catch (err) {
+      console.warn('[blocklist] Error evaluating rule:', err);
+      continue;
+    }
+
+    const guild = message.guild;
+    const member = message.member ?? (await guild.members.fetch(message.author.id).catch(() => null));
+    if (!member) {
+      console.warn('[blocklist] Could not resolve guild member for auto-mute.');
+      return;
+    }
+
+    if (!member.moderatable) {
+      console.warn('[blocklist] Skipping auto-mute: member not moderatable.');
+      return;
+    }
+
+    if (member.permissions.has(PermissionFlagsBits.ModerateMembers) ||
+      member.permissions.has(PermissionFlagsBits.Administrator)
+    ) {
+      return;
+    }
+
+    const durationMs = Math.max(1, rule.minutes) * 60 * 1000;
+    const now = Date.now();
+    const existingUntil = member.communicationDisabledUntilTimestamp ?? 0;
+    const existingRemaining = existingUntil > now ? existingUntil - now : 0;
+    const finalDuration = Math.max(durationMs, existingRemaining);
+    const finalMinutes = Math.ceil(finalDuration / (60 * 1000));
+
+    const auditReason = `Automatischer Mute: ${rule.reason}`.slice(0, 512);
+
+    try {
+      await member.timeout(finalDuration, auditReason);
+    } catch (err) {
+      console.error('[blocklist] Failed to apply auto-mute:', err);
+      return;
+    }
+
+    const safeReason = sanitizeForLog(rule.reason);
+    const matchInfo = `\`${rule.pattern}\`${rule.flags ? ` [${rule.flags}]` : ''}`;
+    const baseLine =
+      rule.minutes === finalMinutes
+        ? `🤖 Automatischer Mute: ${message.author} wurde für ${finalMinutes} Minuten stummgeschaltet.`
+        : `🤖 Automatischer Mute: ${message.author} wurde für ${finalMinutes} Minuten stummgeschaltet (Regel: ${rule.minutes} Minuten).`;
+
+    const lines = [
+      baseLine,
+      `Grund: ${safeReason || 'Kein Grund angegeben'}`,
+      `Auslöser: ${matchInfo}`,
+      `Nachricht: ${message.url}`,
+    ];
+
+    const quoted = formatQuoted(content);
+    if (quoted) {
+      lines.push('', quoted);
+    }
+
+    await sendModerationMessage(guild, lines.join('\n'), { logTag: 'auto-mute' });
+    return;
   }
 });
 
