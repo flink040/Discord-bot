@@ -11,6 +11,7 @@ import {
 import { startHttpServer } from './http';
 import { loadCommands } from './commands/_loader';
 import { registerCommands, registerOnGuildJoin, type RegisterMode } from './registry';
+import { syncGuildSettingsForClient, syncGuildSettingsForGuild } from './utils/guild-settings';
 import { isUserVerified } from './utils/verification';
 import { getBlocklistRules } from './utils/blocklist';
 import { sendModerationMessage } from './utils/moderation';
@@ -137,6 +138,7 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
       console.warn('[blocklist] Message Content Intent ist deaktiviert. Automatische Mutes aus der Blockliste sind nicht aktiv.');
       console.warn('[blocklist] Aktiviere die Message Content Intent im Developer Portal oder setze DISCORD_INTENTS=Guilds,GuildMessages,MessageContent.');
     }
+    await syncGuildSettingsForClient(c);
     try {
       await registerCommands({ client, token: token!, appId: appId!, mode: registerMode });
     } catch (err) {
@@ -145,12 +147,19 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
   });
 
   client.on(Events.GuildCreate, async (guild) => {
-    if (registerMode !== 'guild') return;
-    try {
-      await registerOnGuildJoin({ token: token!, appId: appId!, guildId: guild.id });
-    } catch (err) {
-      console.error(`[register] Guild join registration failed (${guild.id}):`, err);
+    if (registerMode === 'guild') {
+      try {
+        await registerOnGuildJoin({ token: token!, appId: appId!, guildId: guild.id });
+      } catch (err) {
+        console.error(`[register] Guild join registration failed (${guild.id}):`, err);
+      }
     }
+
+    await syncGuildSettingsForGuild(guild);
+  });
+
+  client.on(Events.GuildUpdate, async (_oldGuild, newGuild) => {
+    await syncGuildSettingsForGuild(newGuild);
   });
 
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
