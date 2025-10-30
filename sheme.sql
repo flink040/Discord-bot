@@ -64,6 +64,7 @@ CREATE TABLE public.guild_settings (
   mute_role_id text,
   audit_webhook_url text,
   moderation_channel_id text,
+  marketplace_channel_id text,
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT guild_settings_pkey PRIMARY KEY (guild_id)
 );
