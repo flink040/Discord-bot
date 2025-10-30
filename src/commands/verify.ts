@@ -200,7 +200,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
   const row: UserRow | undefined = rows?.[0];
   if (!row || !row.minecraft_username) {
-    await interaction.editReply('❌ Es wurde kein Eintrag mit diesem Minecraft-Namen gefunden. Bitte überprüfe die Schreibweise.');
+    await interaction.editReply('❌ Es wurde kein Eintrag mit diesem Minecraft-Namen gefunden. Bitte überprüfe ob du deinen Account auf https://op-item-db.com/ verknüpft hast.');
     return;
   }
 
