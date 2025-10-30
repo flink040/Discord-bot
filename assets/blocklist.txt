@@ -10,18 +10,29 @@
 60|Doxxing/Leaks|i|\b(dox|leak|adresse\s*(ist|:)|wohnst\s*in|telefon(nummer|#|:))\b
 60|Extremistische Parole/Code|i|\bs\W*i\W*e\W*g\W*h\W*e\W*i\W*l\b|(?:\b14\b.*\b88\b)|(?:\b88\b.*\b14\b)
 60|Sexualisierung Minderjähriger|i|\b(l+o?l+i|sh[o0]ta|minor\s*n[uü]de|c(?:hild)?\s*p(?:orn|rn))\b
-60|Rassistische Beleidigungen (diverse; maskiert)|iu|\b(n[i1]gg[a@e3]r(s)?|n[i1]gg[a@e3]\b|ch[i1]nk\b|sp[i1]c\b|g[o0]{2}k\b|k[i1]k[e3]\b|wet\W*back|porch\W*monkey|sand\W*n[i1]gg[a@e3]r|rag\W*head|towel\W*head|b[e3]an[e3]r\b|kan[a@]ck[e3]\b|schlitz\W*auge|zigeun[e3]r\b)\b
+60|Rassistische Beleidigungen (diverse; maskiert)|iu|\b(n[i1]gg[a@e3]r(s)?|n[i1]gg[a@e3]\b|ch[i1]nk\b|sp[i1]c\b|g[o0]{2}k\b|k[i1]k[e3]\b|wet\W*back|porch\W*monkey|sand\W*n[i1]gg[a@e3]r|rag\W*head|towel\W*head|b[e3]an[e3]r\b|kan[a@]ck[e3]\b|schlitz\W*auge|zigeun[e3]r\b)\b||\b(nega|niggeor|nygger)\b
+60|Extremismus (Bezug in Propaganda-Kontext)|i|\bnazi(s)?\b(?=.*(heil|führer|sieg))
+60|Hassrede (Antisemitismus)|i|\bdreckig(?:e|er)?\s+jud(?:e|en)\b
 
 
 # 30 Minuten — starke Beleidigungen/Entmenschlichung
 30|Schwere Beleidigung (de)|i|\bh\W*ur\W*en\W*s[o0]hn\b|\bw\W*ichs\W*er\b|\ba\W*schl\W*och\b|\bb[a@]st[a@]rd\b|\bunterm\W*ensch\b
 30|Schwere Beleidigung (en)|i|\bf[a@][g9]{2}[o0]t\b|\br[e3]t[a@]rd\b|\bc\W*unt\b|\bd\W*ickh\W*ead\b|\bb\W*itch\b
 30|Schwere Beleidigung (explizit)|i|\bhurensohn\b
+30|Ableistische Beleidigung (schwer)|i|\b(kr[uü]ppel|missgeburt|behinderten?\s*opfer|behinderten?\s*sohn|behindertensohn|behindertenopfer|down(?:i|y)e?s?)\b
+30|Schwere Beleidigung (explizit)|i|\barschgeburt\b
+30|Schwere Beleidigung (explizit)|i|\bmissgeburt\b
+30|Schwere Beleidigung (Dialekt)|i|\bhuan\b
+15|Abkürzung (pot. 'Hurensohn' – kontextsensitiv)|i|\bhs\b
+30|Schwere Beleidigung (Schreibvariante)|i|\bwixxer\b
+30|Schwere Beleidigung (explizit)|i|\bhundesohn\b
 
 # 15 Minuten — Beleidigungen/derbe Sprache
-15|Beleidigung|i|\bd\W*umm\W*k\W*opf\b|\bsp\W*ast\b|\bhalt\W*die\W*(schn\W*auze|fr[eä]sse)\b|\bf\W*ck\W*dich\b
+15|Beleidigung|i|\bd\W*umm\W*k\W*opf\b|\bsp\W*ast\b|\bhalt\W*die\W*(schn\W*auze|fr[eä]sse)\b|\bf\W*ck\W*dich\b|\barschloch\b
 15|Unangemessene Ausdrucksweise (explizit)|i|\bfick(e|t|en|st)\b|\bfick\s*dich\b
-
+15|Ableistische Beleidigung (Phrase)|i|\b(du\s*bist\s*behindert|bist\s*du\s*behindert|voll\s*behindert|mega\s*behindert)\b
+15|Beleidigung (Nazi als Beschimpfung)|i|\bdu\s+nazi(s)?\b
+15|Schwere Beleidigung (explizit)|i|\bficker\b
 
 # 5 Minuten — Spam/Scam/NSFW/Flooding
 5|Spam/Scam Content|i|discord\.gg\/\w+|discord\.com\/invite\/\w+|free\s*nitro|giveaway|airdrop|onlyfans|snap\s*premium|crypto\s*giveaway|claim\s*here|free\s*skins
@@ -29,3 +40,10 @@
 5|Emoji-Flood|u|(?:\p{Emoji_Presentation}|\p{Extended_Pictographic}){5,}
 5|Beleidigung (derb, mild)|i|\bn[uü]tt[e3]\b
 5|Unangemessene Ausdrucksweise|i|\bwichs[e3]\b
+5|Beleidigung (derb, mild)|i|\bn[uü]tt[e3]n\b
+
+
+
+
+
+
