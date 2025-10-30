@@ -124,6 +124,17 @@ function truncate(text: string, limit = 180): string {
   return `${text.slice(0, limit - 1)}…`;
 }
 
+const ITEM_DB_BASE_URL = 'https://op-item-db.com';
+
+function escapeMarkdown(text: string): string {
+  return text.replace(/[\\*_`~|\[\]()]/g, match => `\\${match}`);
+}
+
+function buildItemLink(name: string): string {
+  const query = encodeURIComponent(name);
+  return `${ITEM_DB_BASE_URL}/search?q=${query}`;
+}
+
 function formatIntentRow(row: TradeIntentRow): string | null {
   const item = getFirstRelation(row.items);
   const itemName = item?.name?.trim();
@@ -133,25 +144,24 @@ function formatIntentRow(row: TradeIntentRow): string | null {
 
   const lines: string[] = [];
   const quantityText = formatQuantity(row.quantity);
-  const headerParts = [`**${itemName}**`];
-  if (quantityText) {
-    headerParts.push(`(${quantityText})`);
-  }
-  lines.push(`• ${headerParts.join(' ')}`);
+  const escapedName = escapeMarkdown(itemName);
+  const link = buildItemLink(itemName);
+  const headerSuffix = quantityText ? ` · ${quantityText}` : '';
+  lines.push(`• **[${escapedName}](${link})**${headerSuffix}`);
 
   const priceText = formatPrice(row.price_min, row.price_max);
   if (priceText) {
-    lines.push(`  Preis: ${priceText}`);
+    lines.push(`  💰 ${priceText}`);
   }
 
   const contact = row.contact_method?.trim();
   if (contact) {
-    lines.push(`  Kontakt: ${truncate(contact, 120)}`);
+    lines.push(`  📞 ${truncate(contact, 120)}`);
   }
 
   const notes = row.notes?.trim();
   if (notes) {
-    lines.push(`  Notiz: ${truncate(notes, 180)}`);
+    lines.push(`  📝 ${truncate(notes, 180)}`);
   }
 
   return lines.join('\n');
