@@ -6,7 +6,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
-import { getModerationChannelId } from '../utils/moderation';
+import { sendModerationMessage } from '../utils/moderation';
 
 const MAX_TIMEOUT_MINUTES = 28 * 24 * 60; // Discord allows up to 28 days
 
@@ -93,24 +93,6 @@ async function requireModeratorPermission(interaction: MuteCommandInteraction) {
   }
 }
 
-async function notifyModerationChannel(interaction: MuteCommandInteraction, message: string) {
-  const channelId =
-    (await getModerationChannelId(interaction.guild.id)) ?? process.env.MODERATION_CHANNEL_ID;
-  if (!channelId) {
-    return;
-  }
-
-  const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
-  if (!channel || !channel.isTextBased()) {
-    console.warn('[mute] Konfigurierter Moderationschannel nicht gefunden oder nicht textbasiert.');
-    return;
-  }
-
-  await channel.send({ content: message }).catch((err) => {
-    console.error('[mute] Fehler beim Senden der Moderationsnachricht:', err);
-  });
-}
-
 export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const interaction = await ensureGuildInteraction(rawInteraction);
   await requireModeratorPermission(interaction);
@@ -190,7 +172,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const logMessage =
     `${interaction.user.toString()} hat <@${targetMember.id}> für ${minutes} Minuten ` +
     `gemutet für ${safeReason}.`;
-  await notifyModerationChannel(interaction, logMessage);
+  await sendModerationMessage(interaction.guild, logMessage, { logTag: 'mute' });
 };
 
 export default { data: data.toJSON(), execute } satisfies CommandDef;
