@@ -11,6 +11,10 @@ import { getModerationChannelId, setModerationChannelId } from '../utils/moderat
 import { findVerifiedRole, VERIFIED_ROLE_NAME } from '../utils/verification';
 
 const MODERATION_CHANNEL_NAME = 'moderation-log';
+const RENAME_PERMISSION_FLAGS = [
+  PermissionFlagsBits.ChangeNickname,
+  PermissionFlagsBits.ManageNicknames,
+] as const;
 
 const data = new SlashCommandBuilder()
   .setName('init')
@@ -77,19 +81,50 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
       );
     } else {
       try {
+        const permissionsWithoutRename = guild.roles.everyone.permissions.remove(
+          RENAME_PERMISSION_FLAGS,
+        );
         verifiedRole = await guild.roles.create({
           name: VERIFIED_ROLE_NAME,
           mentionable: true,
+          permissions: permissionsWithoutRename,
           reason: 'Initial server setup via /init',
         });
-        updates.push(`✅ Die Rolle "${VERIFIED_ROLE_NAME}" wurde erstellt (${verifiedRole}).`);
+        updates.push(
+          `✅ Die Rolle "${VERIFIED_ROLE_NAME}" wurde erstellt (${verifiedRole}) und erlaubt keine Nickname-Änderungen.`,
+        );
       } catch (error) {
         console.error('[init] Failed to create verified role', error);
         warnings.push('⚠️ Beim Erstellen der Rolle "verifiziert" ist ein Fehler aufgetreten.');
       }
     }
   } else {
-    updates.push(`ℹ️ Die Rolle "${VERIFIED_ROLE_NAME}" ist bereits vorhanden (${verifiedRole}).`);
+    const hasRenamePermissions = RENAME_PERMISSION_FLAGS.some(permission =>
+      verifiedRole?.permissions.has(permission),
+    );
+
+    if (hasRenamePermissions) {
+      if (!canManageRoles) {
+        warnings.push(
+          '⚠️ Die Rolle "verifiziert" erlaubt aktuell das Ändern von Nicknames, aber mir fehlt die Berechtigung **Rollen verwalten**, um das zu ändern.',
+        );
+      } else {
+        try {
+          const updatedPermissions = verifiedRole.permissions.remove(RENAME_PERMISSION_FLAGS);
+          await verifiedRole.setPermissions(updatedPermissions);
+          updates.push(
+            `✅ Die Rolle "${VERIFIED_ROLE_NAME}" wurde aktualisiert, um das Ändern von Nicknames zu verhindern.`,
+          );
+        } catch (error) {
+          console.error('[init] Failed to update verified role permissions', error);
+          warnings.push(
+            '⚠️ Die Berechtigungen der Rolle "verifiziert" konnten nicht angepasst werden, um Nickname-Änderungen zu verbieten.',
+          );
+        }
+      }
+    } else {
+      updates.push(`ℹ️ Die Rolle "${VERIFIED_ROLE_NAME}" ist bereits vorhanden (${verifiedRole}).`);
+    }
   }
 
   const existingModerationChannelId = await getModerationChannelId(guild.id);
