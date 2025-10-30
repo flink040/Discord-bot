@@ -186,28 +186,194 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   }
 
   if (!moderationChannel) {
-    if (!canManageChannels) {
+    const channelSelectRow = new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(
+      new ChannelSelectMenuBuilder()
+        .setCustomId('init-moderation-select')
+        .setPlaceholder('Wähle einen Channel für Moderationsmeldungen')
+        .setMinValues(1)
+        .setMaxValues(1)
+        .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
+    );
+
+    const filter = (componentInteraction: MessageComponentInteraction) =>
+      componentInteraction.user.id === interaction.user.id;
+
+    if (canManageChannels) {
+      const promptMessage = await interaction.followUp({
+        content: 'Soll ich einen Moderation-log Channel erstellen?',
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId('init-moderation-create')
+              .setLabel('Ja, bitte erstellen')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId('init-moderation-use-existing')
+              .setLabel('Nein, bestehenden wählen')
+              .setStyle(ButtonStyle.Secondary),
+          ),
+        ],
+        ephemeral: true,
+      });
+
+      try {
+        const choice = (await promptMessage.awaitMessageComponent({
+          componentType: ComponentType.Button,
+          filter,
+          time: 60_000,
+        })) as ButtonInteraction;
+
+        if (choice.customId === 'init-moderation-create') {
+          try {
+            const created = await guild.channels.create({
+              name: MODERATION_CHANNEL_NAME,
+              type: ChannelType.GuildText,
+              reason: 'Initial server setup via /init',
+            });
+
+            moderationChannel = created;
+            const stored = await setModerationChannelId(guild.id, created.id, guild.name);
+            if (stored) {
+              updates.push(`✅ Der Moderationschannel ${created} wurde erstellt und gespeichert.`);
+            } else {
+              warnings.push('⚠️ Der neue Moderationschannel konnte nicht gespeichert werden.');
+            }
+
+            await choice.update({
+              content: moderationChannel
+                ? `✅ ${moderationChannel} wird für Moderationsmeldungen verwendet.`
+                : '✅ Moderationschannel erstellt.',
+              components: [],
+            });
+          } catch (creationError) {
+            console.error('[init] Failed to create moderation channel', creationError);
+            warnings.push('⚠️ Beim Erstellen des Moderationschannels ist ein Fehler aufgetreten.');
+            await choice.update({
+              content:
+                '⚠️ Beim Erstellen des Moderationschannels ist ein Fehler aufgetreten. Bitte prüfe meine Berechtigungen.',
+              components: [],
+            });
+          }
+        } else {
+          await choice.update({
+            content: 'Bitte wähle einen bestehenden Channel für Moderationsmeldungen aus.',
+            components: [channelSelectRow],
+          });
+
+          try {
+            const selection = (await promptMessage.awaitMessageComponent({
+              componentType: ComponentType.ChannelSelect,
+              filter,
+              time: 60_000,
+            })) as ChannelSelectMenuInteraction;
+
+            const selectedChannelId = selection.values[0];
+            const selectedChannel =
+              guild.channels.cache.get(selectedChannelId) ?? (await guild.channels.fetch(selectedChannelId));
+
+            if (isSupportedGuildTextChannel(selectedChannel)) {
+              moderationChannel = selectedChannel;
+              const stored = await setModerationChannelId(guild.id, selectedChannel.id, guild.name);
+
+              if (stored) {
+                updates.push(`✅ Moderationsmeldungen werden nun in ${selectedChannel} gesendet.`);
+              } else {
+                warnings.push('⚠️ Der ausgewählte Moderationschannel konnte nicht gespeichert werden.');
+              }
+
+              await selection.update({
+                content: moderationChannel
+                  ? `✅ ${moderationChannel} wird für Moderationsmeldungen verwendet.`
+                  : '✅ Channel gespeichert.',
+                components: [],
+              });
+            } else {
+              await selection.update({
+                content:
+                  '⚠️ Der ausgewählte Channel ist kein Textchannel. Bitte führe /init erneut aus, um einen gültigen Channel zu wählen.',
+                components: [],
+              });
+              warnings.push('⚠️ Es wurde kein gültiger Moderationschannel ausgewählt.');
+            }
+          } catch (selectionError) {
+            console.warn('[init] No moderation channel selected', selectionError);
+            await promptMessage.edit({
+              content:
+                '⚠️ Es wurde kein Channel ausgewählt. Du kannst /init erneut ausführen, um einen Moderationschannel festzulegen.',
+              components: [],
+            });
+            warnings.push(
+              '⚠️ Es wurde kein Channel ausgewählt. Du kannst /init erneut ausführen, um einen Moderationschannel festzulegen.',
+            );
+          }
+        }
+      } catch (choiceError) {
+        console.warn('[init] No choice made for moderation channel', choiceError);
+        await promptMessage.edit({
+          content:
+            '⚠️ Es wurde keine Auswahl getroffen. Du kannst /init erneut ausführen, um einen Moderationschannel festzulegen.',
+          components: [],
+        });
+        warnings.push(
+          '⚠️ Es wurde keine Auswahl getroffen. Du kannst /init erneut ausführen, um einen Moderationschannel festzulegen.',
+        );
+      }
+    } else {
       warnings.push(
         '⚠️ Ich konnte keinen Moderationschannel anlegen, da mir die Berechtigung **Kanäle verwalten** fehlt.',
       );
-    } else {
-      try {
-        const created = await guild.channels.create({
-          name: MODERATION_CHANNEL_NAME,
-          type: ChannelType.GuildText,
-          reason: 'Initial server setup via /init',
-        });
+      const promptMessage = await interaction.followUp({
+        content:
+          'Ich kann keinen Moderation-log Channel erstellen, da mir die Berechtigung **Kanäle verwalten** fehlt. Bitte wähle einen bestehenden Channel.',
+        components: [channelSelectRow],
+        ephemeral: true,
+      });
 
-        moderationChannel = created;
-        const stored = await setModerationChannelId(guild.id, created.id, guild.name);
-        if (stored) {
-          updates.push(`✅ Der Moderationschannel ${created} wurde erstellt und gespeichert.`);
+      try {
+        const selection = (await promptMessage.awaitMessageComponent({
+          componentType: ComponentType.ChannelSelect,
+          filter,
+          time: 60_000,
+        })) as ChannelSelectMenuInteraction;
+
+        const selectedChannelId = selection.values[0];
+        const selectedChannel =
+          guild.channels.cache.get(selectedChannelId) ?? (await guild.channels.fetch(selectedChannelId));
+
+        if (isSupportedGuildTextChannel(selectedChannel)) {
+          moderationChannel = selectedChannel;
+          const stored = await setModerationChannelId(guild.id, selectedChannel.id, guild.name);
+
+          if (stored) {
+            updates.push(`✅ Moderationsmeldungen werden nun in ${selectedChannel} gesendet.`);
+          } else {
+            warnings.push('⚠️ Der ausgewählte Moderationschannel konnte nicht gespeichert werden.');
+          }
+
+          await selection.update({
+            content: moderationChannel
+              ? `✅ ${moderationChannel} wird für Moderationsmeldungen verwendet.`
+              : '✅ Channel gespeichert.',
+            components: [],
+          });
         } else {
-          warnings.push('⚠️ Der neue Moderationschannel konnte nicht gespeichert werden.');
+          await selection.update({
+            content:
+              '⚠️ Der ausgewählte Channel ist kein Textchannel. Bitte führe /init erneut aus, um einen gültigen Channel zu wählen.',
+            components: [],
+          });
+          warnings.push('⚠️ Es wurde kein gültiger Moderationschannel ausgewählt.');
         }
-      } catch (error) {
-        console.error('[init] Failed to create moderation channel', error);
-        warnings.push('⚠️ Beim Erstellen des Moderationschannels ist ein Fehler aufgetreten.');
+      } catch (selectionError) {
+        console.warn('[init] No moderation channel selected (no permissions)', selectionError);
+        await promptMessage.edit({
+          content:
+            '⚠️ Es wurde kein Channel ausgewählt. Du kannst /init erneut ausführen, um einen Moderationschannel festzulegen.',
+          components: [],
+        });
+        warnings.push(
+          '⚠️ Es wurde kein Channel ausgewählt. Du kannst /init erneut ausführen, um einen Moderationschannel festzulegen.',
+        );
       }
     }
   }
