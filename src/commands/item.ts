@@ -113,7 +113,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const embeds = items.map(item => {
+    const embeds = items.flatMap(item => {
       const rarity = getFirstRelation(item.rarity);
       const type = getFirstRelation(item.type);
       const chest = getFirstRelation(item.chest);
@@ -188,20 +188,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
         })
         .filter((value): value is { type: string; url: string } => value !== null);
 
-      if (imageInfos.length > 0) {
-        const imageList = imageInfos
-          .map((image, index) => {
-            const typeLabel = image.type.charAt(0).toUpperCase() + image.type.slice(1);
-            const suffix = imageInfos.length > 1 ? ` ${index + 1}` : '';
-            return `• [${typeLabel}${suffix}](${image.url})`;
-          })
-          .join('\n');
-
-        if (imageList.length > 0) {
-          fields.push({ name: 'Bilder', value: imageList });
-        }
-      }
-
       const embed = new EmbedBuilder()
         .setTitle(item.name)
         .setColor(0x2b2d31)
@@ -209,9 +195,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
       if (imageInfos.length > 0) {
         embed.setImage(imageInfos[0].url);
-        if (imageInfos.length > 1) {
-          embed.setThumbnail(imageInfos[1].url);
-        }
       }
 
       const createdAt = item.created_at ? new Date(item.created_at) : null;
@@ -219,10 +202,19 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
         embed.setTimestamp(createdAt);
       }
 
-      return embed;
+      const additionalImageEmbeds = imageInfos.slice(1).map((image, index) =>
+        new EmbedBuilder()
+          .setTitle(`${item.name} — ${image.type.charAt(0).toUpperCase() + image.type.slice(1)} ${index + 2}`)
+          .setColor(0x2b2d31)
+          .setImage(image.url)
+      );
+
+      return [embed, ...additionalImageEmbeds];
     });
 
-    await interaction.editReply({ embeds });
+    const maxEmbeds = embeds.slice(0, 10);
+
+    await interaction.editReply({ embeds: maxEmbeds });
   } catch (err) {
     console.error('[command:item]', err);
     if (err instanceof Error) {
