@@ -8,9 +8,11 @@ import {
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getModerationChannelId, setModerationChannelId } from '../utils/moderation';
+import { getMarketplaceChannelId, setMarketplaceChannelId } from '../utils/marketplace';
 import { findVerifiedRole, VERIFIED_ROLE_NAME } from '../utils/verification';
 
 const MODERATION_CHANNEL_NAME = 'moderation-log';
+const MARKETPLACE_CHANNEL_NAME = 'marktplatz';
 const RENAME_PERMISSION_FLAGS = [
   PermissionFlagsBits.ChangeNickname,
   PermissionFlagsBits.ManageNicknames,
@@ -46,7 +48,7 @@ async function requireManageGuild(interaction: InitInteraction) {
   }
 }
 
-function isSupportedModerationChannel(channel: GuildBasedChannel | null | undefined):
+function isSupportedGuildTextChannel(channel: GuildBasedChannel | null | undefined):
   channel is GuildBasedChannel & { type: ChannelType.GuildText | ChannelType.GuildAnnouncement } {
   return (
     !!channel &&
@@ -133,7 +135,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   if (existingModerationChannelId) {
     try {
       const fetched = await guild.channels.fetch(existingModerationChannelId);
-      if (isSupportedModerationChannel(fetched)) {
+      if (isSupportedGuildTextChannel(fetched)) {
         moderationChannel = fetched;
         updates.push(`ℹ️ Moderationsmeldungen werden bereits in ${fetched} gesendet.`);
       } else {
@@ -147,7 +149,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
   if (!moderationChannel) {
     const fallback = guild.channels.cache.find(
-      channel => isSupportedModerationChannel(channel) && channel.name === MODERATION_CHANNEL_NAME,
+      channel => isSupportedGuildTextChannel(channel) && channel.name === MODERATION_CHANNEL_NAME,
     );
 
     if (fallback) {
@@ -184,6 +186,67 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
       } catch (error) {
         console.error('[init] Failed to create moderation channel', error);
         warnings.push('⚠️ Beim Erstellen des Moderationschannels ist ein Fehler aufgetreten.');
+      }
+    }
+  }
+
+  const existingMarketplaceChannelId = await getMarketplaceChannelId(guild.id);
+  let marketplaceChannel: GuildBasedChannel | null = null;
+
+  if (existingMarketplaceChannelId) {
+    try {
+      const fetched = await guild.channels.fetch(existingMarketplaceChannelId);
+      if (isSupportedGuildTextChannel(fetched)) {
+        marketplaceChannel = fetched;
+        updates.push(`ℹ️ Marktplatz-Einträge werden bereits in ${fetched} veröffentlicht.`);
+      } else {
+        warnings.push('⚠️ Der gespeicherte Marktplatzchannel existiert nicht mehr oder ist kein Textchannel.');
+      }
+    } catch (error) {
+      console.warn('[init] Failed to fetch marketplace channel', error);
+      warnings.push('⚠️ Der gespeicherte Marktplatzchannel konnte nicht geladen werden.');
+    }
+  }
+
+  if (!marketplaceChannel) {
+    const fallback = guild.channels.cache.find(
+      channel => isSupportedGuildTextChannel(channel) && channel.name === MARKETPLACE_CHANNEL_NAME,
+    );
+
+    if (fallback) {
+      marketplaceChannel = fallback;
+      const stored = await setMarketplaceChannelId(guild.id, fallback.id, guild.name);
+      if (stored) {
+        updates.push(`✅ Marktplatz-Einträge werden nun in ${fallback} veröffentlicht.`);
+      } else {
+        warnings.push('⚠️ Der gefundene Marktplatzchannel konnte nicht gespeichert werden.');
+      }
+    }
+  }
+
+  if (!marketplaceChannel) {
+    if (!canManageChannels) {
+      warnings.push(
+        '⚠️ Ich konnte keinen Marktplatzchannel anlegen, da mir die Berechtigung **Kanäle verwalten** fehlt.',
+      );
+    } else {
+      try {
+        const created = await guild.channels.create({
+          name: MARKETPLACE_CHANNEL_NAME,
+          type: ChannelType.GuildText,
+          reason: 'Initial server setup via /init',
+        });
+
+        marketplaceChannel = created;
+        const stored = await setMarketplaceChannelId(guild.id, created.id, guild.name);
+        if (stored) {
+          updates.push(`✅ Der Marktplatzchannel ${created} wurde erstellt und gespeichert.`);
+        } else {
+          warnings.push('⚠️ Der neue Marktplatzchannel konnte nicht gespeichert werden.');
+        }
+      } catch (error) {
+        console.error('[init] Failed to create marketplace channel', error);
+        warnings.push('⚠️ Beim Erstellen des Marktplatzchannels ist ein Fehler aufgetreten.');
       }
     }
   }
