@@ -1,12 +1,8 @@
-import { AttachmentBuilder, EmbedBuilder, SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
-import { Buffer } from 'node:buffer';
-import path from 'node:path';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { EmbedBuilder, SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
 const DEFAULT_LIMIT = 3;
-const DEFAULT_SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour
 
 export const data = new SlashCommandBuilder()
   .setName('item')
@@ -31,10 +27,6 @@ type ItemRow = {
   type: ItemRelation<{ label: string | null; slug: string | null }>;
   chest: ItemRelation<{ label: string | null }>;
   signatures: ItemRelation<{ signer_name: string | null }>;
-  images: ItemRelation<{
-    path: string | null;
-    type: string | null;
-  }>;
   enchantments: ItemRelation<{
     level: number | null;
     enchantment: ItemRelation<{ label: string | null; slug: string | null }>;
@@ -63,184 +55,6 @@ function formatStars(stars: number): string {
   return `${'★'.repeat(starCount)}${stars > starCount ? ` (+${stars - starCount})` : ''}`;
 }
 
-type StorageBucketApi = ReturnType<SupabaseClient['storage']['from']>;
-
-type ImageAsset = {
-  type: string;
-  attachment: AttachmentBuilder;
-  attachmentName: string;
-};
-
-function resolveImageExtension(objectPath: string, mimeType?: string): string {
-  const ext = path.extname(objectPath);
-  if (ext) {
-    return ext.startsWith('.') ? ext : `.${ext}`;
-  }
-
-  if (mimeType) {
-    if (mimeType.includes('png')) return '.png';
-    if (mimeType.includes('jpeg')) return '.jpg';
-    if (mimeType.includes('jpg')) return '.jpg';
-    if (mimeType.includes('gif')) return '.gif';
-    if (mimeType.includes('webp')) return '.webp';
-  }
-
-  return '.png';
-}
-
-function resolveExpiresInSeconds(): number | null {
-  const rawValue = process.env.SUPABASE_ITEM_IMAGE_TTL_SECONDS;
-  if (!rawValue) return null;
-
-  const parsed = Number.parseInt(rawValue, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return null;
-  }
-
-  return parsed;
-}
-
-function resolveObjectPathCandidates(rawPath: string, bucket: string): string[] {
-  const candidates = new Set<string>();
-
-  const trimmedBucket = bucket.trim().replace(/^\/+|\/+$/g, '');
-  const pushCandidate = (value: string | null | undefined) => {
-    if (!value) return;
-    const normalized = value.trim().replace(/^\/+/, '');
-    if (normalized) {
-      candidates.add(normalized);
-    }
-  };
-
-  const tryPushWithVariants = (value: string) => {
-    pushCandidate(value);
-
-    if (trimmedBucket && value.startsWith(`${trimmedBucket}/`)) {
-      pushCandidate(value.slice(trimmedBucket.length + 1));
-    }
-
-    if (value.startsWith('public/')) {
-      const withoutPublic = value.slice('public/'.length);
-      pushCandidate(withoutPublic);
-
-      if (trimmedBucket && withoutPublic.startsWith(`${trimmedBucket}/`)) {
-        pushCandidate(withoutPublic.slice(trimmedBucket.length + 1));
-      }
-    }
-  };
-
-  const directPath = rawPath.trim();
-  if (!directPath) {
-    return [];
-  }
-
-  try {
-    const parsedUrl = new URL(directPath);
-    const pathname = parsedUrl.pathname.replace(/^\/+/, '');
-    const storagePrefix = 'storage/v1/object/';
-
-    if (pathname.startsWith(storagePrefix)) {
-      tryPushWithVariants(pathname.slice(storagePrefix.length));
-    }
-
-    tryPushWithVariants(pathname);
-  } catch {
-    tryPushWithVariants(directPath.replace(/^\/+/, ''));
-  }
-
-  return Array.from(candidates);
-}
-
-async function loadImageAssets(options: {
-  item: ItemRow;
-  storageBucket: StorageBucketApi;
-  imageBucket: string;
-  max: number;
-}): Promise<ImageAsset[]> {
-  const { item, storageBucket, imageBucket, max } = options;
-  if (max <= 0) return [];
-
-  const assets: ImageAsset[] = [];
-  const images = toArray(item.images);
-  const expiresInOverride = resolveExpiresInSeconds();
-
-  for (let index = 0; index < images.length && assets.length < max; index += 1) {
-    const image = images[index];
-    const rawPath = image?.path?.trim();
-    if (!rawPath) continue;
-
-    const objectPathCandidates = resolveObjectPathCandidates(rawPath, imageBucket);
-    if (objectPathCandidates.length === 0) continue;
-
-    let selectedSignedUrl: { url: string; objectPath: string } | null = null;
-
-    for (const candidate of objectPathCandidates) {
-      try {
-        const { data: signedData, error: signedError } = await storageBucket.createSignedUrl(
-          candidate,
-          expiresInOverride ?? 60
-        );
-
-        if (signedError || !signedData?.signedUrl) {
-          console.warn('[command:item] Failed to create signed image URL', {
-            path: candidate,
-            error: signedError,
-          });
-          continue;
-        }
-
-        selectedSignedUrl = {
-          url: signedData.signedUrl,
-          objectPath: candidate,
-        };
-        break;
-      } catch (error) {
-        console.warn('[command:item] Unexpected error while signing image URL', {
-          error,
-          path: candidate,
-        });
-      }
-    }
-
-    if (!selectedSignedUrl) {
-      continue;
-    }
-
-    try {
-      const response = await fetch(selectedSignedUrl.url);
-      if (!response.ok) {
-        console.warn('[command:item] Failed to download image', {
-          path: selectedSignedUrl.objectPath,
-          status: response.status,
-          statusText: response.statusText,
-        });
-        continue;
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      const typeLabel = (image?.type ?? 'Bild').trim() || 'Bild';
-      const mimeType = response.headers.get('content-type') ?? undefined;
-      const extension = resolveImageExtension(selectedSignedUrl.objectPath, mimeType);
-      const attachmentName = `${item.id}-${assets.length + 1}${extension}`;
-
-      assets.push({
-        type: typeLabel,
-        attachmentName,
-        attachment: new AttachmentBuilder(buffer, { name: attachmentName }),
-      });
-    } catch (error) {
-      console.warn('[command:item] Unexpected error while preparing image', {
-        error,
-        path: selectedSignedUrl.objectPath,
-      });
-    }
-  }
-
-  return assets;
-}
-
 async function fetchItems({
   name,
 }: {
@@ -261,7 +75,6 @@ async function fetchItems({
       type:item_types(label, slug),
       chest:chests(label),
       signatures:item_signatures(signer_name),
-      images:item_images(path, type),
       enchantments:item_enchantments(level, enchantment:enchantments(label, slug)),
       effects:item_item_effects(level, effect:item_effects(label, slug))`
     )
@@ -285,9 +98,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   await interaction.deferReply();
 
   const name = interaction.options.getString('name');
-  const supabase = getSupabaseClient();
-  const imageBucket = process.env.SUPABASE_ITEM_IMAGE_BUCKET ?? 'item-images';
-  const storageBucket = supabase.storage.from(imageBucket);
 
   try {
     const items = await fetchItems({ name });
@@ -296,8 +106,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const embedEntries: Array<{ embed: EmbedBuilder; attachment?: AttachmentBuilder }> = [];
-    let attachmentsRemaining = 10;
+    const embeds: EmbedBuilder[] = [];
     let embedsRemaining = 10;
 
     for (const item of items) {
@@ -332,7 +141,11 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
           })
           .filter((value): value is { label: string; level: number } => value !== null)
           .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
-          .map(entry => `• ${entry.label} LVL ${entry.level}`)
+          .map(entry => {
+            const level = Number(entry.level);
+            const suffix = Number.isNaN(level) || level <= 1 ? '' : ` LVL ${level}`;
+            return `• ${entry.label}${suffix}`;
+          })
           .join('\n') || null;
 
       const effectText =
@@ -344,7 +157,11 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
           })
           .filter((value): value is { label: string; level: number } => value !== null)
           .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
-          .map(entry => `• ${entry.label} LVL ${entry.level}`)
+          .map(entry => {
+            const level = Number(entry.level);
+            const suffix = Number.isNaN(level) || level <= 1 ? '' : ` LVL ${level}`;
+            return `• ${entry.label}${suffix}`;
+          })
           .join('\n') || null;
 
       const fields: { name: string; value: string }[] = [
@@ -369,65 +186,19 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       const embed = new EmbedBuilder()
         .setTitle(item.name)
         .setColor(0x2b2d31)
-        .addFields(fields);
+        .addFields(fields)
+        .setDescription(`[Mehr Anzeigen](https://op-item-db.com/item/${item.id})`);
 
       const createdAt = item.created_at ? new Date(item.created_at) : null;
       if (createdAt && !Number.isNaN(createdAt.getTime())) {
         embed.setTimestamp(createdAt);
       }
 
-      const entry: { embed: EmbedBuilder; attachment?: AttachmentBuilder } = { embed };
-      embedEntries.push(entry);
+      embeds.push(embed);
       embedsRemaining -= 1;
-
-      if (attachmentsRemaining <= 0 || embedsRemaining < 0) {
-        continue;
-      }
-
-      const maxImagesForItem = Math.min(attachmentsRemaining, 1 + embedsRemaining);
-      if (maxImagesForItem <= 0) {
-        continue;
-      }
-
-      const imageAssets = await loadImageAssets({
-        item,
-        storageBucket,
-        imageBucket,
-        max: maxImagesForItem,
-      });
-
-      if (imageAssets.length === 0) {
-        continue;
-      }
-
-      const [firstAsset, ...restAssets] = imageAssets;
-      if (firstAsset) {
-        entry.attachment = firstAsset.attachment;
-        embed.setImage(`attachment://${firstAsset.attachmentName}`);
-        attachmentsRemaining -= 1;
-      }
-
-      let additionalIndex = 2;
-      for (const asset of restAssets) {
-        if (attachmentsRemaining <= 0 || embedsRemaining <= 0) break;
-
-        const label = asset.type.charAt(0).toUpperCase() + asset.type.slice(1);
-        const imageEmbed = new EmbedBuilder()
-          .setTitle(`${item.name} — ${label} ${additionalIndex}`)
-          .setColor(0x2b2d31)
-          .setImage(`attachment://${asset.attachmentName}`);
-
-        embedEntries.push({ embed: imageEmbed, attachment: asset.attachment });
-        attachmentsRemaining -= 1;
-        embedsRemaining -= 1;
-        additionalIndex += 1;
-      }
     }
 
-    const embeds = embedEntries.map(entry => entry.embed);
-    const files = embedEntries.flatMap(entry => (entry.attachment ? [entry.attachment] : []));
-
-    await interaction.editReply(files.length > 0 ? { embeds, files } : { embeds });
+    await interaction.editReply({ embeds });
   } catch (err) {
     console.error('[command:item]', err);
     if (err instanceof Error) {
