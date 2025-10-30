@@ -153,9 +153,9 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   if (existingMuteUntil && existingMuteUntil > Date.now()) {
     const remainingMs = existingMuteUntil - Date.now();
     const formatted = formatRemainingDuration(remainingMs) || 'wenige Sekunden';
-    const relativeTimestamp = `<t:${Math.floor(existingMuteUntil / 1000)}:R>`;
+    const absoluteTimestamp = `<t:${Math.floor(existingMuteUntil / 1000)}:f>`;
     await interaction.reply({
-      content: `❌ Dieser Nutzer ist bereits gemutet und bleibt noch für ${formatted} gemutet (endet ${relativeTimestamp}).`,
+      content: `❌ Dieser Nutzer ist bereits gemutet und bleibt noch für ${formatted} gemutet (endet am ${absoluteTimestamp}).`,
       flags: MessageFlags.Ephemeral,
     });
     return;
