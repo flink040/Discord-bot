@@ -29,6 +29,7 @@ No extra "register" step needed.
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅* | Service-Role-Key für serverseitige Zugriffe. Alternativ `SUPABASE_ANON_KEY` setzen, falls nur öffentliche Tabellen benötigt werden. |
 | `SUPABASE_ANON_KEY` | ➖ | Optionaler Alternativ-Key, falls nur öffentliche Tabellen gelesen werden. |
 | `MODERATION_CHANNEL_ID` | ➖ | Globale Fallback-Channel-ID für Moderationsmeldungen (z. B. von `/mute`). Kann pro Server mit `/setmoderation` überschrieben werden. |
+| `MODERATION_CHANNEL_STORAGE` | ➖ | Optionales Override: `supabase` erzwingt Supabase-Speicherung, `file` erzwingt die JSON-Datei. Ohne Angabe wird bei vorhandener Supabase-Konfiguration automatisch die Tabelle `guild_settings` (Spalte `moderation_channel_id`) verwendet. |
 
 \* Pflicht, sofern kein `SUPABASE_ANON_KEY` gesetzt ist.
 
@@ -65,8 +66,10 @@ Die Slash-Commands im Überblick:
 
 ### Moderationschannel konfigurieren
 
-- `/setmoderation` speichert die Auswahl pro Server in der Datei `config/moderation-channels.json`. Die Datei wird bei Bedarf automatisch angelegt.
-- Stelle sicher, dass der Bot-Prozess Schreibrechte im `config`-Ordner hat. Falls kein Eintrag gefunden wird, greift der Bot auf die Umgebungsvariable `MODERATION_CHANNEL_ID` zurück.
+- Liegt eine Supabase-Konfiguration (`SUPABASE_URL` + Key) vor, speichert `/setmoderation` die Channel-ID automatisch in der Tabelle `guild_settings` unter `moderation_channel_id`.
+- Ohne Supabase (oder wenn `MODERATION_CHANNEL_STORAGE=file` gesetzt ist) landet die Einstellung in `config/moderation-channels.json` auf dem lokalen Dateisystem. Die Datei wird bei Bedarf automatisch angelegt.
+- Setze `MODERATION_CHANNEL_STORAGE=supabase`, falls du Supabase erzwingen möchtest, obwohl die automatische Erkennung nicht greift.
+- Stelle sicher, dass der Bot-Prozess Schreibrechte im `config`-Ordner hat, wenn du die Datei-Variante nutzt. Falls kein Eintrag gefunden wird, greift der Bot auf die Umgebungsvariable `MODERATION_CHANNEL_ID` zurück.
 
 > Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
 
