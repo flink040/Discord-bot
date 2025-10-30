@@ -457,7 +457,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
   try {
     await channel.send({
-      content: `<@${interaction.user.id}> hat den Marktplatz aktualisiert:`,
+      content: `Der Marktplatz von <@${interaction.user.id}>`,
       embeds: [embed],
     });
   } catch (error) {
