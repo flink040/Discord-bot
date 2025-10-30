@@ -63,6 +63,11 @@ Die Slash-Commands im Überblick:
 - `/mute` mutet einen Spieler für eine festgelegte Anzahl an Minuten (Voice & Text) und protokolliert den Mute im konfigurierten Moderationschannel.
 - `/setmoderation` legt den Channel fest, in dem Moderationsmeldungen für den aktuellen Server erscheinen sollen.
 
+### Moderationschannel konfigurieren
+
+- `/setmoderation` speichert die Auswahl pro Server in der Datei `config/moderation-channels.json`. Die Datei wird bei Bedarf automatisch angelegt.
+- Stelle sicher, dass der Bot-Prozess Schreibrechte im `config`-Ordner hat. Falls kein Eintrag gefunden wird, greift der Bot auf die Umgebungsvariable `MODERATION_CHANNEL_ID` zurück.
+
 > Hinweis: Der bestehende `/auctions`-Command bleibt im Code erhalten, ist aktuell aber deaktiviert und wird nicht registriert.
 
 ---
