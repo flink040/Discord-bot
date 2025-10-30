@@ -129,6 +129,18 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 
   const channel = interaction.channel as GuildTextBasedChannel;
+  const moderationChannelId =
+    (interaction.guildId && (await getModerationChannelId(interaction.guildId))) ??
+    process.env.MODERATION_CHANNEL_ID;
+
+  if (moderationChannelId && channel.id === moderationChannelId) {
+    await interaction.reply({
+      content: 'Dieser Befehl kann nicht im Moderationschannel verwendet werden.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const sub = interaction.options.getSubcommand();
