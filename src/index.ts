@@ -60,15 +60,19 @@ function resolveGatewayIntents(envValue: string | undefined) {
     .filter(([, value]) => typeof value === 'number')
     .map(([key, value]) => [key, value as number] as const);
 
+  const nameByBit = new Map<number, string>(
+    intentEntries.map(([key, value]) => [value, key]),
+  );
+
   const names = Array.from(resolved).map((bit) => {
-    const entry = intentEntries.find(([, value]) => value === bit);
-    return entry ? entry[0] : `#${bit}`;
+    const entry = nameByBit.get(bit);
+    return entry ?? `#${bit}`;
   });
 
-  return { intents: Array.from(resolved), names, unknown };
+  return { intents: Array.from(resolved), names, unknown, nameByBit };
 }
 
-const { intents, names: intentNames, unknown: unknownIntentNames } = resolveGatewayIntents(
+const { intents, unknown: unknownIntentNames, nameByBit } = resolveGatewayIntents(
   process.env.DISCORD_INTENTS,
 );
 
@@ -79,15 +83,27 @@ if (unknownIntentNames.length > 0) {
   );
 }
 
-console.log(`[discord] Gateway intents: ${intentNames.join(', ')}`);
+function formatIntentNames(bits: number[]): string {
+  if (bits.length === 0) {
+    return '(none)';
+  }
+  return bits.map((bit) => nameByBit.get(bit) ?? `#${bit}`).join(', ');
+}
+
+function isDisallowedIntentsError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof err === 'string') {
+    return err.includes('Disallowed intents') || err.includes('Used disallowed intents');
+  }
+  if (err instanceof Error) {
+    const message = err.message ?? '';
+    return message.includes('Disallowed intents') || message.includes('Used disallowed intents');
+  }
+  return false;
+}
 
 // Start health server first
 const server = startHttpServer(port);
-
-// Discord client with minimal intents
-const client = new Client({
-  intents,
-});
 
 // Load commands
 const commands = loadCommands();
@@ -109,194 +125,253 @@ function formatQuoted(text: string): string {
   return truncated.split(/\r?\n/).map((line) => `> ${line || ' '}`).join('\n');
 }
 
-// Ready
-client.once(Events.ClientReady, async (c) => {
-  console.log(`[discord] Logged in as ${c.user.tag}`);
-  try {
-    await registerCommands({ client, token: token!, appId: appId!, mode: registerMode });
-  } catch (err) {
-    console.error('[register] Initial registration failed:', err);
-  }
-});
+type ClientAttachmentOptions = {
+  hasMessageContent: boolean;
+};
 
-// Register when bot joins a new guild (only relevant in guild mode)
-client.on(Events.GuildCreate, async (guild) => {
-  if (registerMode !== 'guild') return;
-  try {
-    await registerOnGuildJoin({ token: token!, appId: appId!, guildId: guild.id });
-  } catch (err) {
-    console.error(`[register] Guild join registration failed (${guild.id}):`, err);
-  }
-});
-
-// Handle interactions
-client.on(Events.InteractionCreate, async (interaction: Interaction) => {
-  if (interaction.isChatInputCommand()) {
-    const cmd = commands.get(interaction.commandName);
-    if (!cmd) {
-      await interaction
-        .reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral })
-        .catch(() => {});
-      return;
+function attachClientEventHandlers(client: Client, { hasMessageContent }: ClientAttachmentOptions) {
+  client.once(Events.ClientReady, async (c) => {
+    console.log(`[discord] Logged in as ${c.user.tag}`);
+    if (!hasMessageContent) {
+      console.warn('[blocklist] Message Content Intent ist deaktiviert. Automatische Mutes aus der Blockliste sind nicht aktiv.');
+      console.warn('[blocklist] Aktiviere die Message Content Intent im Developer Portal oder setze DISCORD_INTENTS=Guilds,GuildMessages,MessageContent.');
     }
+    try {
+      await registerCommands({ client, token: token!, appId: appId!, mode: registerMode });
+    } catch (err) {
+      console.error('[register] Initial registration failed:', err);
+    }
+  });
 
-    if (!commandsWithoutVerification.has(interaction.commandName)) {
-      if (!interaction.inGuild() || !interaction.guild) {
+  client.on(Events.GuildCreate, async (guild) => {
+    if (registerMode !== 'guild') return;
+    try {
+      await registerOnGuildJoin({ token: token!, appId: appId!, guildId: guild.id });
+    } catch (err) {
+      console.error(`[register] Guild join registration failed (${guild.id}):`, err);
+    }
+  });
+
+  client.on(Events.InteractionCreate, async (interaction: Interaction) => {
+    if (interaction.isChatInputCommand()) {
+      const cmd = commands.get(interaction.commandName);
+      if (!cmd) {
         await interaction
-          .reply({
-            content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Führe den Befehl auf dem Server aus und nutze `/verify` zur Verifizierung.',
-            flags: MessageFlags.Ephemeral,
-          })
+          .reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral })
           .catch(() => {});
         return;
       }
 
-      const verified = await isUserVerified(interaction.guild, interaction.user.id);
-      if (!verified) {
-        await interaction
-          .reply({
-            content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Nutze `/verify`, um die Verifizierung abzuschließen.',
-            flags: MessageFlags.Ephemeral,
-          })
-          .catch(() => {});
-        return;
-      }
-    }
+      if (!commandsWithoutVerification.has(interaction.commandName)) {
+        if (!interaction.inGuild() || !interaction.guild) {
+          await interaction
+            .reply({
+              content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Führe den Befehl auf dem Server aus und nutze `/verify` zur Verifizierung.',
+              flags: MessageFlags.Ephemeral,
+            })
+            .catch(() => {});
+          return;
+        }
 
-    try {
-      await cmd.execute(interaction);
-    } catch (err) {
-      console.error(`[command:${interaction.commandName}]`, err);
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply('❌ An error occurred while executing this command.').catch(() => {});
-      } else {
-        await interaction
-          .reply({ content: '❌ An error occurred while executing this command.', flags: MessageFlags.Ephemeral })
-          .catch(() => {});
+        const verified = await isUserVerified(interaction.guild, interaction.user.id);
+        if (!verified) {
+          await interaction
+            .reply({
+              content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Nutze `/verify`, um die Verifizierung abzuschließen.',
+              flags: MessageFlags.Ephemeral,
+            })
+            .catch(() => {});
+          return;
+        }
       }
-    }
-    return;
-  }
 
-  if (interaction.isMessageComponent()) {
-    const [commandName] = interaction.customId.split(':', 1);
-    const cmd = commands.get(commandName);
-    if (!cmd || typeof cmd.handleComponent !== 'function') {
+      try {
+        await cmd.execute(interaction);
+      } catch (err) {
+        console.error(`[command:${interaction.commandName}]`, err);
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply('❌ An error occurred while executing this command.').catch(() => {});
+        } else {
+          await interaction
+            .reply({ content: '❌ An error occurred while executing this command.', flags: MessageFlags.Ephemeral })
+            .catch(() => {});
+        }
+      }
       return;
     }
 
-    try {
-      await cmd.handleComponent(interaction);
-    } catch (err) {
-      console.error(`[component:${interaction.customId}]`, err);
-      if (interaction.deferred || interaction.replied) {
-        await interaction
-          .followUp({ content: '❌ Fehler bei der Verarbeitung der Aktion.', flags: MessageFlags.Ephemeral })
-          .catch(() => {});
-      } else {
-        await interaction
-          .reply({ content: '❌ Fehler bei der Verarbeitung der Aktion.', flags: MessageFlags.Ephemeral })
-          .catch(() => {});
+    if (interaction.isMessageComponent()) {
+      const [commandName] = interaction.customId.split(':', 1);
+      const cmd = commands.get(commandName);
+      if (!cmd || typeof cmd.handleComponent !== 'function') {
+        return;
+      }
+
+      try {
+        await cmd.handleComponent(interaction);
+      } catch (err) {
+        console.error(`[component:${interaction.customId}]`, err);
+        if (interaction.deferred || interaction.replied) {
+          await interaction
+            .followUp({ content: '❌ Fehler bei der Verarbeitung der Aktion.', flags: MessageFlags.Ephemeral })
+            .catch(() => {});
+        } else {
+          await interaction
+            .reply({ content: '❌ Fehler bei der Verarbeitung der Aktion.', flags: MessageFlags.Ephemeral })
+            .catch(() => {});
+        }
       }
     }
-  }
-});
+  });
 
-client.on(Events.MessageCreate, async (message) => {
-  if (!message.inGuild() || message.author.bot || message.system) {
-    return;
-  }
+  client.on(Events.MessageCreate, async (message) => {
+    if (!hasMessageContent) {
+      return;
+    }
 
-  const content = message.content ?? '';
-  if (!content.trim()) {
-    return;
-  }
+    if (!message.inGuild() || message.author.bot || message.system) {
+      return;
+    }
 
-  const rules = await getBlocklistRules();
-  if (rules.length === 0) {
-    return;
-  }
+    const content = message.content ?? '';
+    if (!content.trim()) {
+      return;
+    }
 
-  for (const rule of rules) {
-    try {
-      rule.regex.lastIndex = 0;
-      if (!rule.regex.test(content)) {
+    const rules = await getBlocklistRules();
+    if (rules.length === 0) {
+      return;
+    }
+
+    for (const rule of rules) {
+      try {
+        rule.regex.lastIndex = 0;
+        if (!rule.regex.test(content)) {
+          continue;
+        }
+      } catch (err) {
+        console.warn('[blocklist] Error evaluating rule:', err);
         continue;
       }
-    } catch (err) {
-      console.warn('[blocklist] Error evaluating rule:', err);
-      continue;
-    }
 
-    const guild = message.guild;
-    const member = message.member ?? (await guild.members.fetch(message.author.id).catch(() => null));
-    if (!member) {
-      console.warn('[blocklist] Could not resolve guild member for auto-mute.');
+      const guild = message.guild;
+      const member = message.member ?? (await guild.members.fetch(message.author.id).catch(() => null));
+      if (!member) {
+        console.warn('[blocklist] Could not resolve guild member for auto-mute.');
+        return;
+      }
+
+      if (!member.moderatable) {
+        console.warn('[blocklist] Skipping auto-mute: member not moderatable.');
+        return;
+      }
+
+      if (member.permissions.has(PermissionFlagsBits.ModerateMembers) ||
+        member.permissions.has(PermissionFlagsBits.Administrator)
+      ) {
+        return;
+      }
+
+      const durationMs = Math.max(1, rule.minutes) * 60 * 1000;
+      const now = Date.now();
+      const existingUntil = member.communicationDisabledUntilTimestamp ?? 0;
+      const existingRemaining = existingUntil > now ? existingUntil - now : 0;
+      const finalDuration = Math.max(durationMs, existingRemaining);
+      const finalMinutes = Math.ceil(finalDuration / (60 * 1000));
+
+      const auditReason = `Automatischer Mute: ${rule.reason}`.slice(0, 512);
+
+      try {
+        await member.timeout(finalDuration, auditReason);
+      } catch (err) {
+        console.error('[blocklist] Failed to apply auto-mute:', err);
+        return;
+      }
+
+      const safeReason = sanitizeForLog(rule.reason);
+      const matchInfo = `\`${rule.pattern}\`${rule.flags ? ` [${rule.flags}]` : ''}`;
+      const baseLine =
+        rule.minutes === finalMinutes
+          ? `🤖 Automatischer Mute: ${message.author} wurde für ${finalMinutes} Minuten stummgeschaltet.`
+          : `🤖 Automatischer Mute: ${message.author} wurde für ${finalMinutes} Minuten stummgeschaltet (Regel: ${rule.minutes} Minuten).`;
+
+      const lines = [
+        baseLine,
+        `Grund: ${safeReason || 'Kein Grund angegeben'}`,
+        `Auslöser: ${matchInfo}`,
+        `Nachricht: ${message.url}`,
+      ];
+
+      const quoted = formatQuoted(content);
+      if (quoted) {
+        lines.push('', quoted);
+      }
+
+      await sendModerationMessage(guild, lines.join('\n'), { logTag: 'auto-mute' });
       return;
     }
+  });
+}
 
-    if (!member.moderatable) {
-      console.warn('[blocklist] Skipping auto-mute: member not moderatable.');
-      return;
-    }
+type ConnectedClient = {
+  client: Client;
+  hasMessageContent: boolean;
+};
 
-    if (member.permissions.has(PermissionFlagsBits.ModerateMembers) ||
-      member.permissions.has(PermissionFlagsBits.Administrator)
-    ) {
-      return;
-    }
+async function connectWithIntents(requestedIntents: number[]): Promise<ConnectedClient> {
+  const hasMessageContent = requestedIntents.includes(GatewayIntentBits.MessageContent);
+  const instance = new Client({ intents: requestedIntents });
+  attachClientEventHandlers(instance, { hasMessageContent });
 
-    const durationMs = Math.max(1, rule.minutes) * 60 * 1000;
-    const now = Date.now();
-    const existingUntil = member.communicationDisabledUntilTimestamp ?? 0;
-    const existingRemaining = existingUntil > now ? existingUntil - now : 0;
-    const finalDuration = Math.max(durationMs, existingRemaining);
-    const finalMinutes = Math.ceil(finalDuration / (60 * 1000));
-
-    const auditReason = `Automatischer Mute: ${rule.reason}`.slice(0, 512);
-
+  try {
+    await instance.login(token!);
+    return { client: instance, hasMessageContent };
+  } catch (err) {
+    instance.removeAllListeners();
     try {
-      await member.timeout(finalDuration, auditReason);
-    } catch (err) {
-      console.error('[blocklist] Failed to apply auto-mute:', err);
-      return;
-    }
-
-    const safeReason = sanitizeForLog(rule.reason);
-    const matchInfo = `\`${rule.pattern}\`${rule.flags ? ` [${rule.flags}]` : ''}`;
-    const baseLine =
-      rule.minutes === finalMinutes
-        ? `🤖 Automatischer Mute: ${message.author} wurde für ${finalMinutes} Minuten stummgeschaltet.`
-        : `🤖 Automatischer Mute: ${message.author} wurde für ${finalMinutes} Minuten stummgeschaltet (Regel: ${rule.minutes} Minuten).`;
-
-    const lines = [
-      baseLine,
-      `Grund: ${safeReason || 'Kein Grund angegeben'}`,
-      `Auslöser: ${matchInfo}`,
-      `Nachricht: ${message.url}`,
-    ];
-
-    const quoted = formatQuoted(content);
-    if (quoted) {
-      lines.push('', quoted);
-    }
-
-    await sendModerationMessage(guild, lines.join('\n'), { logTag: 'auto-mute' });
-    return;
+      await instance.destroy();
+    } catch {}
+    throw err;
   }
-});
+}
 
-// Login
-client.login(token!).catch((err) => {
-  console.error('[discord] Login failed:', err);
-  process.exit(1);
-});
+let activeClient: Client | null = null;
+let activeIntents = intents;
+
+void (async () => {
+  try {
+    const { client } = await connectWithIntents(activeIntents);
+    activeClient = client;
+    console.log(`[discord] Gateway intents: ${formatIntentNames(activeIntents)}`);
+  } catch (err) {
+    if (isDisallowedIntentsError(err) && activeIntents.includes(GatewayIntentBits.MessageContent)) {
+      const fallbackIntents = activeIntents.filter((bit) => bit !== GatewayIntentBits.MessageContent);
+      console.warn('[discord] Message Content Intent ist nicht autorisiert. Starte erneut ohne diese Intent.');
+      console.warn('[blocklist] Blocklisten-Auto-Mutes sind deaktiviert, bis die Message Content Intent freigeschaltet ist.');
+      try {
+        const { client } = await connectWithIntents(fallbackIntents);
+        activeClient = client;
+        activeIntents = fallbackIntents;
+        console.log(`[discord] Gateway intents: ${formatIntentNames(activeIntents)}`);
+      } catch (fallbackErr) {
+        console.error('[discord] Login failed after removing Message Content intent:', fallbackErr);
+        process.exit(1);
+      }
+    } else {
+      console.error('[discord] Login failed:', err);
+      process.exit(1);
+    }
+  }
+})();
 
 // Graceful shutdown
 const shutdown = async () => {
   console.log('[shutdown] Shutting down...');
+  const client = activeClient;
   try {
-    await client.destroy();
+    if (client) {
+      await client.destroy();
+    }
   } catch {}
   try {
     server.close();
