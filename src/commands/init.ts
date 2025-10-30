@@ -8,7 +8,13 @@ import {
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getModerationChannelId, setModerationChannelId } from '../utils/moderation';
-import { getMarketplaceChannelId, setMarketplaceChannelId } from '../utils/marketplace';
+import {
+  DEFAULT_MARKETPLACE_POST_INTERVAL_HOURS,
+  getMarketplaceChannelId,
+  getMarketplacePostIntervalHours,
+  setMarketplaceChannelId,
+  setMarketplacePostIntervalHours,
+} from '../utils/marketplace';
 import { findVerifiedRole, VERIFIED_ROLE_NAME } from '../utils/verification';
 
 const MODERATION_CHANNEL_NAME = 'moderation-log';
@@ -21,7 +27,13 @@ const RENAME_PERMISSION_FLAGS = [
 const data = new SlashCommandBuilder()
   .setName('init')
   .setDescription('Initialisiert den Bot auf diesem Server und richtet wichtige Ressourcen ein.')
-  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addIntegerOption(option =>
+    option
+      .setName('marktplatz_intervall')
+      .setDescription('Mindestabstand in Stunden zwischen den Marktplatz-Beiträgen eines Nutzers.')
+      .setMinValue(1),
+  );
 
 type InitInteraction = ChatInputCommandInteraction<'cached'>;
 
@@ -69,6 +81,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   }
 
   const me = guild.members.me ?? (await guild.members.fetch(interaction.client.user.id));
+  const requestedMarketplaceInterval = interaction.options.getInteger('marktplatz_intervall');
   const canManageRoles = me.permissions.has(PermissionFlagsBits.ManageRoles);
   const canManageChannels = me.permissions.has(PermissionFlagsBits.ManageChannels);
 
@@ -191,6 +204,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   }
 
   const existingMarketplaceChannelId = await getMarketplaceChannelId(guild.id);
+  let marketplacePostIntervalHours = await getMarketplacePostIntervalHours(guild.id);
   let marketplaceChannel: GuildBasedChannel | null = null;
 
   if (existingMarketplaceChannelId) {
@@ -198,7 +212,11 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
       const fetched = await guild.channels.fetch(existingMarketplaceChannelId);
       if (isSupportedGuildTextChannel(fetched)) {
         marketplaceChannel = fetched;
-        updates.push(`ℹ️ Marktplatz-Einträge werden bereits in ${fetched} veröffentlicht.`);
+        const intervalInfo =
+          marketplacePostIntervalHours !== null
+            ? ` Der aktuelle Post-Intervall beträgt ${marketplacePostIntervalHours} Stunden.`
+            : '';
+        updates.push(`ℹ️ Marktplatz-Einträge werden bereits in ${fetched} veröffentlicht.${intervalInfo}`);
       } else {
         warnings.push('⚠️ Der gespeicherte Marktplatzchannel existiert nicht mehr oder ist kein Textchannel.');
       }
@@ -249,6 +267,48 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
         warnings.push('⚠️ Beim Erstellen des Marktplatzchannels ist ein Fehler aufgetreten.');
       }
     }
+  }
+
+  if (marketplaceChannel) {
+    const intervalToPersist =
+      requestedMarketplaceInterval ??
+      marketplacePostIntervalHours ??
+      DEFAULT_MARKETPLACE_POST_INTERVAL_HOURS;
+
+    if (marketplacePostIntervalHours !== intervalToPersist) {
+      const storedInterval = await setMarketplacePostIntervalHours(
+        guild.id,
+        intervalToPersist,
+        guild.name,
+      );
+
+      if (storedInterval) {
+        marketplacePostIntervalHours = intervalToPersist;
+        if (requestedMarketplaceInterval !== null) {
+          updates.push(
+            `✅ Der Marktplatz-Post-Intervall wurde auf ${intervalToPersist} Stunden festgelegt.`,
+          );
+        } else if (intervalToPersist === DEFAULT_MARKETPLACE_POST_INTERVAL_HOURS) {
+          updates.push(
+            `✅ Der Marktplatz-Post-Intervall wurde auf den Standardwert von ${intervalToPersist} Stunden gesetzt.`,
+          );
+        } else {
+          updates.push(
+            `✅ Der Marktplatz-Post-Intervall wurde auf ${intervalToPersist} Stunden aktualisiert.`,
+          );
+        }
+      } else {
+        warnings.push('⚠️ Der Marktplatz-Post-Intervall konnte nicht gespeichert werden.');
+      }
+    } else if (marketplacePostIntervalHours !== null) {
+      updates.push(
+        `ℹ️ Der Marktplatz-Post-Intervall bleibt bei ${marketplacePostIntervalHours} Stunden.`,
+      );
+    }
+  } else if (requestedMarketplaceInterval !== null) {
+    warnings.push(
+      '⚠️ Es konnte kein Marktplatzchannel eingerichtet werden, daher wurde kein Post-Intervall gespeichert.',
+    );
   }
 
   if (updates.length === 0) {

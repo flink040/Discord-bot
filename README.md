@@ -76,8 +76,9 @@ Die Slash-Commands im Überblick:
 
 ### Marktplatzchannel konfigurieren
 
-- `/init` legt einen Channel mit dem Namen `marktplatz` an (oder verwendet einen vorhandenen) und speichert die Channel-ID serverbezogen.
-- Mit Supabase-Konfiguration landet die ID automatisch in `guild_settings.marketplace_channel_id`. Ohne Supabase — oder wenn `MARKETPLACE_CHANNEL_STORAGE=file` gesetzt ist — wird `config/marketplace-channels.json` verwendet.
+- `/init` legt einen Channel mit dem Namen `marktplatz` an (oder verwendet einen vorhandenen) und speichert die Channel-ID serverbezogen. Über die optionale Eingabe `marktplatz_intervall` lässt sich direkt festlegen, wie viele Stunden zwischen zwei Beiträgen desselben Nutzers liegen müssen.
+- Ohne Angabe setzt `/init` den Intervall auf den Standardwert von 24 Stunden, sofern noch kein Wert gespeichert ist.
+- Mit Supabase-Konfiguration landen die Werte automatisch in `guild_settings.marketplace_channel_id` bzw. `guild_settings.marketplace_post_interval_hours`. Ohne Supabase — oder wenn `MARKETPLACE_CHANNEL_STORAGE=file` gesetzt ist — werden `config/marketplace-channels.json` und `config/marketplace-post-intervals.json` verwendet.
 - Setze `MARKETPLACE_CHANNEL_STORAGE=supabase`, falls du Supabase erzwingen möchtest, obwohl die automatische Erkennung nicht greift. Achte bei Dateispeicherung ebenfalls auf Schreibrechte im `config`-Ordner.
 
 ---
