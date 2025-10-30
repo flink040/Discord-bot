@@ -9,13 +9,12 @@ import {
 } from 'discord.js';
 import { getSupabaseClient } from '../supabase';
 import type { CommandDef } from '../types/Command';
+import { VERIFIED_ROLE_NAME } from '../utils/verification';
 
 type UserRow = {
   discord_id: string | null;
   minecraft_username: string | null;
 };
-
-const VERIFIED_ROLE_NAME = 'verifiziert';
 
 export const data = new SlashCommandBuilder()
   .setName('verify-all')
@@ -95,7 +94,9 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 
   if (!role.editable) {
-    await interaction.editReply('❌ Ich habe nicht genügend Rechte, um die Rolle "verifiziert" zu vergeben.');
+    await interaction.editReply(
+      `❌ Ich habe nicht genügend Rechte, um die Rolle "${VERIFIED_ROLE_NAME}" zu vergeben.`,
+    );
     return;
   }
 

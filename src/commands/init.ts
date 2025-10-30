@@ -101,7 +101,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   if (!verifiedRole) {
     if (!canManageRoles) {
       warnings.push(
-        '⚠️ Ich konnte die Rolle "verifiziert" nicht erstellen, da mir die Berechtigung **Rollen verwalten** fehlt.',
+        `⚠️ Ich konnte die Rolle "${VERIFIED_ROLE_NAME}" nicht erstellen, da mir die Berechtigung **Rollen verwalten** fehlt.`,
       );
     } else {
       try {
@@ -119,7 +119,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
         );
       } catch (error) {
         console.error('[init] Failed to create verified role', error);
-        warnings.push('⚠️ Beim Erstellen der Rolle "verifiziert" ist ein Fehler aufgetreten.');
+        warnings.push(`⚠️ Beim Erstellen der Rolle "${VERIFIED_ROLE_NAME}" ist ein Fehler aufgetreten.`);
       }
     }
   } else {
@@ -130,7 +130,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     if (hasRenamePermissions) {
       if (!canManageRoles) {
         warnings.push(
-          '⚠️ Die Rolle "verifiziert" erlaubt aktuell das Ändern von Nicknames, aber mir fehlt die Berechtigung **Rollen verwalten**, um das zu ändern.',
+          `⚠️ Die Rolle "${VERIFIED_ROLE_NAME}" erlaubt aktuell das Ändern von Nicknames, aber mir fehlt die Berechtigung **Rollen verwalten**, um das zu ändern.`,
         );
       } else {
         try {
@@ -142,7 +142,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
         } catch (error) {
           console.error('[init] Failed to update verified role permissions', error);
           warnings.push(
-            '⚠️ Die Berechtigungen der Rolle "verifiziert" konnten nicht angepasst werden, um Nickname-Änderungen zu verbieten.',
+            `⚠️ Die Berechtigungen der Rolle "${VERIFIED_ROLE_NAME}" konnten nicht angepasst werden, um Nickname-Änderungen zu verbieten.`,
           );
         }
       }

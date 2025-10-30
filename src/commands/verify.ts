@@ -47,12 +47,14 @@ async function ensureRoleAssignment({
     console.error('[verify] Failed to assign role', err);
     if (interaction.deferred || interaction.replied) {
       await interaction
-        .editReply('❌ Ich konnte dir die Rolle "verifiziert" nicht zuweisen. Bitte wende dich an ein Teammitglied.')
+        .editReply(
+          `❌ Ich konnte dir die Rolle "${VERIFIED_ROLE_NAME}" nicht zuweisen. Bitte wende dich an ein Teammitglied.`,
+        )
         .catch(() => {});
     } else {
       await interaction
         .reply({
-          content: '❌ Ich konnte dir die Rolle "verifiziert" nicht zuweisen. Bitte wende dich an ein Teammitglied.',
+          content: `❌ Ich konnte dir die Rolle "${VERIFIED_ROLE_NAME}" nicht zuweisen. Bitte wende dich an ein Teammitglied.`,
           flags: MessageFlags.Ephemeral,
         })
         .catch(() => {});
@@ -176,7 +178,9 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 
   if (!role.editable) {
-    await interaction.editReply('❌ Ich habe nicht genügend Rechte, um die Rolle "verifiziert" zu vergeben.');
+    await interaction.editReply(
+      `❌ Ich habe nicht genügend Rechte, um die Rolle "${VERIFIED_ROLE_NAME}" zu vergeben.`,
+    );
     return;
   }
 
