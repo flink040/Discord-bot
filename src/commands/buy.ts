@@ -75,25 +75,48 @@ function escapeLikePattern(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+    value,
+  );
+}
+
 async function fetchItem(term: string): Promise<ItemRow | null> {
   const supabase = getSupabaseClient();
 
-  const { data: exactRow, error: exactError } = await supabase
-    .from('items')
-    .select('id, name')
-    .eq('status', 'approved')
-    .eq('id', term)
-    .maybeSingle<ItemRow>();
+  if (isUuid(term)) {
+    const { data: exactIdRow, error: exactIdError } = await supabase
+      .from('items')
+      .select('id, name')
+      .eq('status', 'approved')
+      .eq('id', term)
+      .maybeSingle<ItemRow>();
 
-  if (exactError && exactError.code !== 'PGRST116') {
-    throw exactError;
-  }
+    if (exactIdError && exactIdError.code !== 'PGRST116') {
+      throw exactIdError;
+    }
 
-  if (exactRow) {
-    return exactRow;
+    if (exactIdRow) {
+      return exactIdRow;
+    }
   }
 
   const escapedLike = escapeLikePattern(term);
+
+  const { data: exactNameRow, error: exactNameError } = await supabase
+    .from('items')
+    .select('id, name')
+    .eq('status', 'approved')
+    .ilike('name', escapedLike)
+    .maybeSingle<ItemRow>();
+
+  if (exactNameError && exactNameError.code !== 'PGRST116') {
+    throw exactNameError;
+  }
+
+  if (exactNameRow) {
+    return exactNameRow;
+  }
 
   const { data: row, error } = await supabase
     .from('items')
