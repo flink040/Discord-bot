@@ -63,6 +63,7 @@ type ItemImageRow = {
 
 type ItemRow = {
   id: string;
+  slug: string | null;
   name: string;
   origin: string | null;
   view_count: number | null;
