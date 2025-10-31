@@ -479,10 +479,12 @@ function buildImagesDescription(item: NormalizedItem, activeImage: ImageType | n
   if (available === 0) {
     return 'Keine Bilder vorhanden.';
   }
+
   const label = activeImage ?? item.defaultImageType;
-  if (!label) {
+  if (!label || !item.images[label]) {
     return 'Keine Bilder vorhanden.';
   }
+
   return label === 'ingame' ? 'Ingame-Ansicht' : 'Lore-Ansicht';
 }
 
@@ -504,13 +506,16 @@ function buildFooter(item: NormalizedItem): string | null {
 }
 
 function resolveEmbedImage(item: NormalizedItem, tab: TabId, activeImage: ImageType | null): string | null {
-  if (tab === 'images' && activeImage) {
-    const candidate = item.images[activeImage];
-    if (candidate) {
-      return candidate;
-    }
+  if (tab !== 'images') {
+    return null;
   }
-  return item.preferredImage;
+
+  const label = activeImage ?? item.defaultImageType;
+  if (!label) {
+    return null;
+  }
+
+  return item.images[label] ?? null;
 }
 
 function buildEmbed(state: ItemState): EmbedBuilder {
@@ -594,18 +599,19 @@ function createImageButtons(state: ItemState, disabled: boolean): ActionRowBuild
   const { item } = state;
   const loreAvailable = Boolean(item.images.lore);
   const ingameAvailable = Boolean(item.images.ingame);
+  const viewingImages = state.activeTab === 'images';
 
   const loreButton = new ButtonBuilder()
     .setCustomId(`${COMMAND_ID}:image:lore`)
     .setLabel('Lore')
     .setStyle(state.activeImage === 'lore' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-    .setDisabled(disabled || !loreAvailable);
+    .setDisabled(disabled || !viewingImages || !loreAvailable);
 
   const ingameButton = new ButtonBuilder()
     .setCustomId(`${COMMAND_ID}:image:ingame`)
     .setLabel('Ingame')
     .setStyle(state.activeImage === 'ingame' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-    .setDisabled(disabled || !ingameAvailable);
+    .setDisabled(disabled || !viewingImages || !ingameAvailable);
 
   const itemUrl = buildItemUrl(item);
 
@@ -816,6 +822,15 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
 
   if (action === 'tab' && value && isTabId(value)) {
     state.activeTab = value;
+    if (value === 'images') {
+      const current = state.activeImage;
+      if (current && state.item.images[current]) {
+        // keep current selection
+      } else {
+        const fallback = (['ingame', 'lore'] as const).find(type => state.item.images[type]);
+        state.activeImage = fallback ?? null;
+      }
+    }
   } else if (action === 'image' && value && isImageType(value)) {
     if (state.item.images[value]) {
       state.activeImage = value;
