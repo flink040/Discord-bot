@@ -14,6 +14,7 @@ import { registerCommands, registerOnGuildJoin, type RegisterMode } from './regi
 import { syncGuildSettingsForClient, syncGuildSettingsForGuild } from './utils/guild-settings';
 import { isUserVerified } from './utils/verification';
 import { getBlocklistRules } from './utils/blocklist';
+import { getCachedAutomodState } from './utils/guild-feature-settings';
 import { sendModerationMessage } from './utils/moderation';
 import { formatDuration } from './utils/time';
 
@@ -261,6 +262,11 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
 
     const content = message.content ?? '';
     if (!content.trim()) {
+      return;
+    }
+
+    const automodState = await getCachedAutomodState(message.guildId);
+    if (automodState !== 'enable') {
       return;
     }
 
