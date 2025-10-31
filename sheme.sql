@@ -66,6 +66,8 @@ CREATE TABLE public.guild_settings (
   moderation_channel_id text,
   marketplace_channel_id text,
   marketplace_post_interval_hours integer,
+  mod_feature text NOT NULL DEFAULT 'disable' CHECK (mod_feature = ANY (ARRAY['enable', 'disable'])),
+  automod text NOT NULL DEFAULT 'disable' CHECK (automod = ANY (ARRAY['enable', 'disable'])),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT guild_settings_pkey PRIMARY KEY (guild_id)
 );
