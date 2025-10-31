@@ -1,43 +1,127 @@
-import { EmbedBuilder, SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  SlashCommandBuilder,
+  escapeMarkdown,
+  type AutocompleteInteraction,
+  type ChatInputCommandInteraction,
+  type Message,
+  type MessageComponentInteraction,
+} from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
-const DEFAULT_LIMIT = 3;
+const COMMAND_ID = 'item';
+const ITEM_URL_BASE = 'https://op-item-db.com/items';
+const DISABLE_AFTER_MS = 120_000;
 
-export const data = new SlashCommandBuilder()
-  .setName('item')
-  .setDescription('Zeigt Items aus der Supabase-Datenbank an.')
-  .addStringOption(option =>
-    option
-      .setName('name')
-      .setDescription('Filtert nach Itemnamen (Teilzeichenfolge)')
-      .setRequired(false)
-  );
+const rarityColorMap = new Map<string, number>([
+  ['jackpot', 0xff006e],
+  ['legendär', 0xffc300],
+  ['legendary', 0xffc300],
+  ['episch', 0x8e44ad],
+  ['epic', 0x8e44ad],
+  ['selten', 0x1abc9c],
+  ['rare', 0x1abc9c],
+  ['gewöhnlich', 0x95a5a6],
+  ['common', 0x95a5a6],
+]);
+const DEFAULT_RARITY_COLOR = 0x00e6cc;
+
+const numberFormatter = new Intl.NumberFormat('de-DE', {
+  maximumFractionDigits: 0,
+});
+const dateFormatter = new Intl.DateTimeFormat('de-DE');
+
+function createItemSupabaseClient() {
+  return getSupabaseClient();
+}
+
+function resolveRarityColor(label: string | null, slug: string | null): number {
+  const candidates = [label, slug]
+    .map(value => value?.toLowerCase().trim())
+    .filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    const color = rarityColorMap.get(candidate);
+    if (typeof color === 'number') {
+      return color;
+    }
+  }
+
+  return DEFAULT_RARITY_COLOR;
+}
 
 type ItemRelation<T> = T | T[] | null;
+
+type ItemImageRow = {
+  type: string | null;
+  path: string | null;
+};
 
 type ItemRow = {
   id: string;
   name: string;
-  stars: number;
-  material: string | null;
   origin: string | null;
+  view_count: number | null;
   created_at: string | null;
   rarity: ItemRelation<{ label: string | null; slug: string | null }>;
-  type: ItemRelation<{ label: string | null; slug: string | null }>;
+  item_type: ItemRelation<{ label: string | null; slug: string | null }>;
   chest: ItemRelation<{ label: string | null }>;
   signatures: ItemRelation<{ signer_name: string | null }>;
   enchantments: ItemRelation<{
     level: number | null;
-    enchantment: ItemRelation<{ label: string | null; slug: string | null }>;
+    enchantment: ItemRelation<{ label: string | null }>;
   }>;
   effects: ItemRelation<{
-    level: number | null;
-    effect: ItemRelation<{ label: string | null; slug: string | null }>;
+    effect: ItemRelation<{ label: string | null }>;
+  }>;
+  images: ItemRelation<ItemImageRow>;
+  uploader: ItemRelation<{
+    discord_username: string | null;
+    minecraft_username: string | null;
+    username?: string | null;
+    display_name?: string | null;
   }>;
 };
 
-function getFirstRelation<T>(relation: ItemRelation<T>): T | null {
+type ImageType = 'lore' | 'ingame';
+
+type NormalizedItem = {
+  id: string;
+  name: string;
+  rarityLabel: string | null;
+  raritySlug: string | null;
+  typeLabel: string | null;
+  origin: string | null;
+  chestLabel: string | null;
+  signatures: string[];
+  enchantments: { name: string; level: number }[];
+  effects: string[];
+  images: Partial<Record<ImageType, string | null>>;
+  preferredImage: string | null;
+  defaultImageType: ImageType | null;
+  uploaderName: string | null;
+  createdAt: Date | null;
+  viewCount: number | null;
+};
+
+type TabId = 'details' | 'enchantments' | 'effects' | 'images';
+
+type ItemState = {
+  item: NormalizedItem;
+  activeTab: TabId;
+  activeImage: ImageType | null;
+  channelId: string | null;
+  messageId: string;
+};
+
+const itemStates = new Map<string, ItemState>();
+const disableTimers = new Map<string, NodeJS.Timeout>();
+
+function unwrapSingle<T>(relation: ItemRelation<T>): T | null {
   if (!relation) return null;
   if (Array.isArray(relation)) {
     return relation[0] ?? null;
@@ -45,168 +129,596 @@ function getFirstRelation<T>(relation: ItemRelation<T>): T | null {
   return relation;
 }
 
-function toArray<T>(relation: ItemRelation<T>): T[] {
+function relationToArray<T>(relation: ItemRelation<T>): T[] {
   if (!relation) return [];
   return Array.isArray(relation) ? relation : [relation];
 }
 
-function formatStars(stars: number): string {
-  const starCount = Math.min(stars, 10);
-  return `${'★'.repeat(starCount)}${stars > starCount ? ` (+${stars - starCount})` : ''}`;
+function parseNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
-async function fetchItems({
-  name,
-}: {
-  name?: string | null;
-}): Promise<ItemRow[]> {
-  const supabase = getSupabaseClient();
+function resolveImageUrl(image: ItemImageRow | null): string | null {
+  if (!image) return null;
+  const candidate = image.path;
+  if (!candidate) return null;
+  if (/^https?:\/\//i.test(candidate)) {
+    return candidate;
+  }
 
-  let query = supabase
+  const baseUrl = (process.env.PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '').trim();
+  if (!baseUrl) {
+    return null;
+  }
+
+  const normalizedBase = baseUrl.replace(/\/+$/, '');
+  const normalizedPath = candidate.replace(/^\/+/, '');
+  return `${normalizedBase}/storage/v1/object/public/${normalizedPath}`;
+}
+
+function deriveUploaderName(relation: ItemRelation<{
+  discord_username: string | null;
+  minecraft_username: string | null;
+  username?: string | null;
+  display_name?: string | null;
+}>): string | null {
+  const uploader = unwrapSingle(relation);
+  if (!uploader) return null;
+  const candidates = [
+    uploader.discord_username,
+    uploader.minecraft_username,
+    uploader.username,
+    uploader.display_name,
+  ];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+function normalizeItem(row: ItemRow): NormalizedItem {
+  const rarity = unwrapSingle(row.rarity);
+  const itemType = unwrapSingle(row.item_type);
+  const chest = unwrapSingle(row.chest);
+  const images = relationToArray(row.images);
+  const loreImage = images.find(image => image?.type === 'lore') ?? null;
+  const ingameImage = images.find(image => image?.type === 'ingame') ?? null;
+  const loreUrl = resolveImageUrl(loreImage);
+  const ingameUrl = resolveImageUrl(ingameImage);
+
+  let preferredImage: string | null = null;
+  let defaultImageType: ImageType | null = null;
+  if (ingameUrl) {
+    preferredImage = ingameUrl;
+    defaultImageType = 'ingame';
+  } else if (loreUrl) {
+    preferredImage = loreUrl;
+    defaultImageType = 'lore';
+  }
+
+  const enchantments = relationToArray(row.enchantments)
+    .map(entry => {
+      const info = unwrapSingle(entry.enchantment);
+      if (!info?.label) return null;
+      const level = typeof entry.level === 'number' ? entry.level : null;
+      if (level === null || level <= 0) return null;
+      return { name: info.label.trim(), level };
+    })
+    .filter((value): value is { name: string; level: number } => Boolean(value))
+    .sort((a, b) => a.name.localeCompare(b.name, 'de-DE'));
+
+  const signatures = relationToArray(row.signatures)
+    .map(signature => signature?.signer_name?.trim())
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => a.localeCompare(b, 'de-DE'));
+
+  const effects = relationToArray(row.effects)
+    .map(effectRelation => {
+      const info = unwrapSingle(effectRelation.effect);
+      return info?.label?.trim() ?? null;
+    })
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => a.localeCompare(b, 'de-DE'));
+
+  const createdAt = row.created_at ? new Date(row.created_at) : null;
+  const validCreatedAt = createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null;
+
+  const viewCount = parseNumber(row.view_count);
+
+  return {
+    id: row.id,
+    name: row.name,
+    rarityLabel: rarity?.label ?? null,
+    raritySlug: rarity?.slug ?? null,
+    typeLabel: itemType?.label ?? null,
+    origin: row.origin ?? null,
+    chestLabel: chest?.label ?? null,
+    signatures,
+    enchantments,
+    effects,
+    images: {
+      lore: loreUrl,
+      ingame: ingameUrl,
+    },
+    preferredImage,
+    defaultImageType,
+    uploaderName: deriveUploaderName(row.uploader),
+    createdAt: validCreatedAt,
+    viewCount,
+  };
+}
+
+function buildItemUrl(item: NormalizedItem): string {
+  return `${ITEM_URL_BASE}/${encodeURIComponent(item.id.trim())}`;
+}
+
+function formatDetailsField(item: NormalizedItem): string {
+  const type = item.typeLabel?.trim() || '—';
+  const rarity = item.rarityLabel?.trim() || 'Unbekannt';
+  const origin = item.origin?.trim() || '—';
+  const chest = item.chestLabel?.trim() || 'Keine Zuordnung';
+  return [
+    `• **Item-Typ:** ${type}`,
+    `• **Seltenheit:** \`${rarity}\``,
+    `• **Herkunft:** ${origin}`,
+    `• **Truhe:** ${chest}`,
+  ].join('\n');
+}
+
+function toRomanNumeral(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return String(value);
+  }
+  const numerals: Array<[number, string]> = [
+    [1000, 'M'],
+    [900, 'CM'],
+    [500, 'D'],
+    [400, 'CD'],
+    [100, 'C'],
+    [90, 'XC'],
+    [50, 'L'],
+    [40, 'XL'],
+    [10, 'X'],
+    [9, 'IX'],
+    [5, 'V'],
+    [4, 'IV'],
+    [1, 'I'],
+  ];
+  let remaining = Math.floor(value);
+  let result = '';
+  for (const [arabic, roman] of numerals) {
+    while (remaining >= arabic) {
+      result += roman;
+      remaining -= arabic;
+    }
+  }
+  return result || String(value);
+}
+
+function buildEnchantmentsValue(item: NormalizedItem): string {
+  if (item.enchantments.length === 0) {
+    return 'Keine Verzauberungen eingetragen.';
+  }
+  return item.enchantments
+    .map(entry => `• **${entry.name}** ${toRomanNumeral(entry.level)}`)
+    .join('\n');
+}
+
+function buildEffectsValue(item: NormalizedItem): string | null {
+  if (item.effects.length === 0) {
+    return null;
+  }
+  return item.effects.map(effect => `• ${effect}`).join('\n');
+}
+
+function buildImagesDescription(item: NormalizedItem, activeImage: ImageType | null): string {
+  const available = [item.images.ingame, item.images.lore].filter(Boolean).length;
+  if (available === 0) {
+    return 'Keine Bilder vorhanden.';
+  }
+  const label = activeImage ?? item.defaultImageType;
+  if (!label) {
+    return 'Keine Bilder vorhanden.';
+  }
+  return label === 'ingame' ? 'Ingame-Ansicht' : 'Lore-Ansicht';
+}
+
+function buildFooter(item: NormalizedItem): string | null {
+  const parts: string[] = [];
+  if (item.uploaderName) {
+    parts.push(`Hochgeladen von ${item.uploaderName}`);
+  }
+  if (item.createdAt) {
+    parts.push(dateFormatter.format(item.createdAt));
+  }
+  if (typeof item.viewCount === 'number') {
+    parts.push(`${numberFormatter.format(item.viewCount)} Aufrufe`);
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts.join(' • ');
+}
+
+function resolveEmbedImage(item: NormalizedItem, tab: TabId, activeImage: ImageType | null): string | null {
+  if (tab === 'images' && activeImage) {
+    const candidate = item.images[activeImage];
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return item.preferredImage;
+}
+
+function buildEmbed(state: ItemState): EmbedBuilder {
+  const { item, activeTab, activeImage } = state;
+  const embed = new EmbedBuilder()
+    .setTitle(item.name)
+    .setColor(resolveRarityColor(item.rarityLabel, item.raritySlug))
+    .setURL(buildItemUrl(item))
+    .setDescription(null);
+
+  const imageUrl = resolveEmbedImage(item, activeTab, activeImage);
+  if (imageUrl) {
+    embed.setImage(imageUrl);
+  }
+
+  const footer = buildFooter(item);
+  if (footer) {
+    embed.setFooter({ text: footer });
+  }
+
+  switch (activeTab) {
+    case 'details': {
+      embed.addFields({ name: 'Item-Details', value: formatDetailsField(item) });
+      if (item.signatures.length > 0) {
+        embed.addFields({ name: 'Signaturen', value: item.signatures.map(name => `\`${name}\``).join(' ') });
+      }
+      break;
+    }
+    case 'enchantments': {
+      embed.addFields({ name: 'Verzauberungen', value: buildEnchantmentsValue(item) });
+      break;
+    }
+    case 'effects': {
+      const value = buildEffectsValue(item);
+      if (value) {
+        embed.addFields({ name: 'Effekte', value });
+      } else {
+        embed.setDescription('Keine Effekte eingetragen.');
+      }
+      break;
+    }
+    case 'images': {
+      embed.setDescription(buildImagesDescription(item, activeImage));
+      break;
+    }
+    default:
+      break;
+  }
+
+  return embed;
+}
+
+function createTabButtons(state: ItemState, disabled: boolean): ActionRowBuilder<ButtonBuilder> {
+  const buttons: ButtonBuilder[] = [
+    new ButtonBuilder()
+      .setCustomId(`${COMMAND_ID}:tab:details`)
+      .setLabel('Details')
+      .setStyle(state.activeTab === 'details' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`${COMMAND_ID}:tab:enchantments`)
+      .setLabel('Verzauberungen')
+      .setStyle(state.activeTab === 'enchantments' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`${COMMAND_ID}:tab:effects`)
+      .setLabel('Effekte')
+      .setStyle(state.activeTab === 'effects' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`${COMMAND_ID}:tab:images`)
+      .setLabel('Bilder')
+      .setStyle(state.activeTab === 'images' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(disabled),
+  ];
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(buttons);
+}
+
+function createImageButtons(state: ItemState, disabled: boolean): ActionRowBuilder<ButtonBuilder> {
+  const { item } = state;
+  const loreAvailable = Boolean(item.images.lore);
+  const ingameAvailable = Boolean(item.images.ingame);
+
+  const loreButton = new ButtonBuilder()
+    .setCustomId(`${COMMAND_ID}:image:lore`)
+    .setLabel('Lore')
+    .setStyle(state.activeImage === 'lore' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+    .setDisabled(disabled || !loreAvailable);
+
+  const ingameButton = new ButtonBuilder()
+    .setCustomId(`${COMMAND_ID}:image:ingame`)
+    .setLabel('Ingame')
+    .setStyle(state.activeImage === 'ingame' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+    .setDisabled(disabled || !ingameAvailable);
+
+  const itemUrl = buildItemUrl(item);
+
+  const linkButton = disabled
+    ? new ButtonBuilder()
+        .setCustomId(`${COMMAND_ID}:link:disabled`)
+        .setLabel('Mehr Anzeigen')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    : new ButtonBuilder().setLabel('Mehr Anzeigen').setStyle(ButtonStyle.Link).setURL(itemUrl);
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents([loreButton, ingameButton, linkButton]);
+}
+
+function buildComponents(state: ItemState, options?: { disabled?: boolean }): ActionRowBuilder<ButtonBuilder>[] {
+  const disabled = options?.disabled ?? false;
+  return [createTabButtons(state, disabled), createImageButtons(state, disabled)];
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+function escapeFilterValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/,/g, '\\,').replace(/\)/g, '\\)').replace(/\(/g, '\\(');
+}
+
+function looksLikeUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+const ITEM_SELECT = `id, name, origin, view_count, created_at,
+  rarity:rarities(label, slug),
+  item_type:item_types(label, slug),
+  chest:chests(label),
+  signatures:item_signatures(signer_name),
+  enchantments:item_enchantments(level, enchantment:enchantments(label)),
+  effects:item_item_effects(effect:item_effects(label)),
+  images:item_images(type, path),
+  uploader:users!items_created_by_fkey(discord_username, minecraft_username, username, display_name)`;
+
+function buildSearchFilter(term: string): string {
+  const parts: string[] = [];
+  const escapedLike = escapeLikePattern(term);
+  const escapedFilterValue = escapeFilterValue(term);
+  parts.push(`name.ilike.%${escapedLike}%`);
+  if (looksLikeUuid(term)) {
+    parts.push(`id.eq.${escapedFilterValue}`);
+  }
+  return parts.join(',');
+}
+
+async function fetchItem(term: string): Promise<ItemRow | null> {
+  const client = createItemSupabaseClient();
+  const filter = buildSearchFilter(term);
+  const query = client
     .from('items')
-    .select(
-      `id,
-      name,
-      stars,
-      material,
-      origin,
-      created_at,
-      rarity:rarities(label, slug),
-      type:item_types(label, slug),
-      chest:chests(label),
-      signatures:item_signatures(signer_name),
-      enchantments:item_enchantments(level, enchantment:enchantments(label, slug)),
-      effects:item_item_effects(level, effect:item_effects(label, slug))`
-    )
+    .select(ITEM_SELECT)
     .eq('status', 'approved')
-    .order('created_at', { ascending: false })
-    .limit(DEFAULT_LIMIT);
+    .or(filter)
+    .order('name', { ascending: true })
+    .limit(1);
 
-  if (name) {
-    query = query.ilike('name', `%${name}%`);
-  }
-
-  const { data: rows, error } = await query;
+  const { data, error } = await query.maybeSingle<ItemRow>();
   if (error) {
-    throw new Error(error.message);
+    throw error;
   }
-
-  return rows ?? [];
+  return data ?? null;
 }
 
-export const execute = async (interaction: ChatInputCommandInteraction) => {
-  await interaction.deferReply();
-
-  const name = interaction.options.getString('name');
+async function searchItems(term: string, limit: number): Promise<Array<{ id: string; name: string }>> {
+  const client = createItemSupabaseClient();
+  const filter = buildSearchFilter(term);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 2_500);
 
   try {
-    const items = await fetchItems({ name });
-    if (items.length === 0) {
-      await interaction.editReply('Keine Items mit diesen Kriterien gefunden.');
+    const { data, error } = await client
+      .from('items')
+      .select('id, name')
+      .eq('status', 'approved')
+      .or(filter)
+      .order('name', { ascending: true })
+      .limit(limit)
+      .abortSignal(controller.signal);
+
+    if (error) {
+      throw error;
+    }
+
+    return (data ?? []).map(row => ({ id: row.id, name: row.name }));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function ensureState(messageId: string): ItemState | null {
+  return itemStates.get(messageId) ?? null;
+}
+
+function storeState(messageId: string, state: ItemState) {
+  itemStates.set(messageId, state);
+}
+
+function removeState(messageId: string) {
+  const existingTimer = disableTimers.get(messageId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    disableTimers.delete(messageId);
+  }
+  itemStates.delete(messageId);
+}
+
+function scheduleDisable(message: Message, state: ItemState) {
+  const existing = disableTimers.get(message.id);
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  const timeout = setTimeout(async () => {
+    disableTimers.delete(message.id);
+    removeState(message.id);
+    try {
+      await message.edit({ components: buildComponents(state, { disabled: true }) });
+    } catch {
+      // ignore edit errors (message deleted, missing permissions, ...)
+    }
+  }, DISABLE_AFTER_MS);
+
+  disableTimers.set(message.id, timeout);
+}
+
+export const data = new SlashCommandBuilder()
+  .setName(COMMAND_ID)
+  .setDescription('Durchsucht die Item-Datenbank nach einem Eintrag.')
+  .addStringOption(option =>
+    option
+      .setName('suche')
+      .setDescription('Suche nach Name oder ID')
+      .setRequired(true)
+      .setAutocomplete(true),
+  );
+
+export const execute = async (interaction: ChatInputCommandInteraction) => {
+  const term = interaction.options.getString('suche', true).trim();
+  if (!term) {
+    await interaction.reply({ content: 'Bitte gib einen Suchbegriff an.' });
+    return;
+  }
+
+  await interaction.deferReply();
+
+  try {
+    const itemRow = await fetchItem(term);
+    if (!itemRow) {
+      await interaction.editReply(`Kein Item gefunden für **${escapeMarkdown(term)}**.`);
       return;
     }
 
-    const embeds: EmbedBuilder[] = [];
-    let embedsRemaining = 10;
+    const item = normalizeItem(itemRow);
+    const state: ItemState = {
+      item,
+      activeTab: 'details',
+      activeImage: item.defaultImageType,
+      channelId: interaction.channelId ?? null,
+      messageId: '',
+    };
 
-    for (const item of items) {
-      if (embedsRemaining <= 0) break;
+    const embed = buildEmbed(state);
+    const components = buildComponents(state);
 
-      const rarity = getFirstRelation(item.rarity);
-      const type = getFirstRelation(item.type);
-      const chest = getFirstRelation(item.chest);
-
-      const details: string[] = [];
-      if (type?.label) details.push(`**Item-Typ:** ${type.label}`);
-      if (rarity?.label) details.push(`**Seltenheit:** ${rarity.label}`);
-      if (item.stars > 0) details.push(`**Sterne:** ${formatStars(item.stars)}`);
-      if (item.material) details.push(`**Material:** ${item.material}`);
-      if (item.origin) details.push(`**Herkunft:** ${item.origin}`);
-      if (chest?.label) details.push(`**Truhe:** ${chest.label}`);
-
-      const signatureText =
-        toArray(item.signatures)
-          .map(signature => signature?.signer_name?.trim())
-          .filter((value): value is string => typeof value === 'string' && value.length > 0)
-          .sort((a, b) => a.localeCompare(b, 'de-DE'))
-          .map(value => `• ${value}`)
-          .join('\n') || null;
-
-      const enchantmentText =
-        toArray(item.enchantments)
-          .map(enchantment => {
-            const enchantmentInfo = getFirstRelation(enchantment.enchantment);
-            if (!enchantmentInfo?.label || !enchantment.level) return null;
-            return { label: enchantmentInfo.label, level: enchantment.level };
-          })
-          .filter((value): value is { label: string; level: number } => value !== null)
-          .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
-          .map(entry => {
-            const level = Number(entry.level);
-            const suffix = Number.isNaN(level) || level <= 1 ? '' : ` LVL ${level}`;
-            return `• ${entry.label}${suffix}`;
-          })
-          .join('\n') || null;
-
-      const effectText =
-        toArray(item.effects)
-          .map(effect => {
-            const effectInfo = getFirstRelation(effect.effect);
-            if (!effectInfo?.label || !effect.level) return null;
-            return { label: effectInfo.label, level: effect.level };
-          })
-          .filter((value): value is { label: string; level: number } => value !== null)
-          .sort((a, b) => a.label.localeCompare(b.label, 'de-DE'))
-          .map(entry => {
-            const level = Number(entry.level);
-            const suffix = Number.isNaN(level) || level <= 1 ? '' : ` LVL ${level}`;
-            return `• ${entry.label}${suffix}`;
-          })
-          .join('\n') || null;
-
-      const fields: { name: string; value: string }[] = [
-        {
-          name: 'Item-Details',
-          value: details.length > 0 ? details.join('\n') : 'Keine Details verfügbar.',
-        },
-      ];
-
-      if (signatureText) {
-        fields.push({ name: 'Signaturen', value: signatureText });
-      }
-
-      if (enchantmentText) {
-        fields.push({ name: 'Verzauberungen', value: enchantmentText });
-      }
-
-      if (effectText) {
-        fields.push({ name: 'Effekte', value: effectText });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle(item.name)
-        .setColor(0x2b2d31)
-        .addFields(fields)
-        .setDescription(`[Mehr Anzeigen](https://op-item-db.com/items/${item.id})`);
-
-      const createdAt = item.created_at ? new Date(item.created_at) : null;
-      if (createdAt && !Number.isNaN(createdAt.getTime())) {
-        embed.setTimestamp(createdAt);
-      }
-
-      embeds.push(embed);
-      embedsRemaining -= 1;
-    }
-
-    await interaction.editReply({ embeds });
+    const reply = (await interaction.editReply({ embeds: [embed], components })) as Message;
+    state.messageId = reply.id;
+    state.channelId = reply.channelId;
+    storeState(reply.id, state);
+    scheduleDisable(reply, state);
   } catch (err) {
-    console.error('[command:item]', err);
-    if (err instanceof Error) {
-      await interaction.editReply(`Fehler beim Laden der Items: ${err.message}`);
-    } else {
-      await interaction.editReply('Unbekannter Fehler beim Laden der Items.');
-    }
+    console.error(`[command:${COMMAND_ID}]`, err);
+    await interaction.editReply('Beim Laden ist etwas schiefgelaufen.');
   }
 };
 
-export default { data: data.toJSON(), execute } satisfies CommandDef;
+function isTabId(value: string): value is TabId {
+  return ['details', 'enchantments', 'effects', 'images'].includes(value);
+}
+
+function isImageType(value: string): value is ImageType {
+  return value === 'lore' || value === 'ingame';
+}
+
+export const handleComponent = async (interaction: MessageComponentInteraction) => {
+  if (!interaction.isButton()) {
+    return;
+  }
+
+  const [command, action, value] = interaction.customId.split(':');
+  if (command !== COMMAND_ID) {
+    return;
+  }
+
+  const state = ensureState(interaction.message.id);
+  if (!state) {
+    await interaction.reply({ content: 'Diese Aktion ist nicht mehr verfügbar.', ephemeral: true });
+    return;
+  }
+
+  if (action === 'tab' && value && isTabId(value)) {
+    state.activeTab = value;
+  } else if (action === 'image' && value && isImageType(value)) {
+    if (state.item.images[value]) {
+      state.activeImage = value;
+    }
+  } else if (action === 'link') {
+    await interaction.reply({ content: 'Der Link ist nicht mehr verfügbar.', ephemeral: true });
+    return;
+  }
+
+  const embed = buildEmbed(state);
+  const components = buildComponents(state);
+  await interaction.update({ embeds: [embed], components });
+};
+
+export const handleAutocomplete = async (interaction: AutocompleteInteraction) => {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== 'suche') {
+    await interaction.respond([]).catch(() => {});
+    return;
+  }
+
+  const term = String(focused.value ?? '').trim();
+  if (!term) {
+    await interaction.respond([]).catch(() => {});
+    return;
+  }
+
+  try {
+    const matches = await searchItems(term, 20);
+    const uniqueValues = new Set<string>();
+    const options = matches
+      .map(match => {
+        const optionValue = match.id;
+        if (uniqueValues.has(optionValue)) {
+          return null;
+        }
+        uniqueValues.add(optionValue);
+        const label = match.name.trim() || match.id;
+        return {
+          name: label,
+          value: optionValue,
+        };
+      })
+      .filter((value): value is { name: string; value: string } => Boolean(value))
+      .slice(0, 20);
+
+    await interaction.respond(options);
+  } catch (err) {
+    console.error(`[autocomplete:${COMMAND_ID}]`, err);
+    await interaction.respond([]).catch(() => {});
+  }
+};
+
+export default {
+  data: data.toJSON(),
+  execute,
+  handleComponent,
+  handleAutocomplete,
+} satisfies CommandDef;
