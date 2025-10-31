@@ -29,6 +29,7 @@ const rarityColorMap = new Map<string, number>([
   ['common', 0x95a5a6],
 ]);
 const DEFAULT_RARITY_COLOR = 0x00e6cc;
+const DEFAULT_IMAGE_BUCKET = 'item-assets';
 
 const numberFormatter = new Intl.NumberFormat('de-DE', {
   maximumFractionDigits: 0,
@@ -83,8 +84,6 @@ type ItemRow = {
   uploader: ItemRelation<{
     discord_username: string | null;
     minecraft_username: string | null;
-    username?: string | null;
-    display_name?: string | null;
   }>;
 };
 
@@ -160,23 +159,49 @@ function resolveImageUrl(image: ItemImageRow | null): string | null {
   }
 
   const normalizedBase = baseUrl.replace(/\/+$/, '');
-  const normalizedPath = candidate.replace(/^\/+/, '');
-  return `${normalizedBase}/storage/v1/object/public/${normalizedPath}`;
+  const normalizedPath = candidate.replace(/^\/+/, '').trim();
+  if (!normalizedPath) {
+    return null;
+  }
+
+  const configuredBucket = (process.env.SUPABASE_ITEM_IMAGE_BUCKET ?? process.env.PUBLIC_SUPABASE_ITEM_IMAGE_BUCKET ?? '').trim();
+  const bucket = configuredBucket || DEFAULT_IMAGE_BUCKET;
+  const sanitizedBucket = bucket.replace(/^\/+|\/+$/g, '');
+
+  let pathWithoutPrefix = normalizedPath;
+  if (/^public\//i.test(pathWithoutPrefix)) {
+    pathWithoutPrefix = pathWithoutPrefix.slice(7);
+  }
+
+  const hasBucketPrefix = sanitizedBucket
+    ? pathWithoutPrefix.toLowerCase().startsWith(`${sanitizedBucket.toLowerCase()}/`)
+    : false;
+  const storagePath = hasBucketPrefix ? pathWithoutPrefix : `${sanitizedBucket}/${pathWithoutPrefix}`;
+
+  const encodedPath = storagePath
+    .split('/')
+    .map(segment => {
+      const trimmed = segment.trim();
+      if (!trimmed) return '';
+      try {
+        return encodeURIComponent(decodeURIComponent(trimmed));
+      } catch {
+        return encodeURIComponent(trimmed);
+      }
+    })
+    .join('/');
+  return `${normalizedBase}/storage/v1/object/public/${encodedPath}`;
 }
 
 function deriveUploaderName(relation: ItemRelation<{
   discord_username: string | null;
   minecraft_username: string | null;
-  username?: string | null;
-  display_name?: string | null;
 }>): string | null {
   const uploader = unwrapSingle(relation);
   if (!uploader) return null;
   const candidates = [
-    uploader.discord_username,
     uploader.minecraft_username,
-    uploader.username,
-    uploader.display_name,
+    uploader.discord_username,
   ];
   for (const candidate of candidates) {
     const trimmed = candidate?.trim();
@@ -493,7 +518,7 @@ const ITEM_SELECT = `id, name, origin, view_count, created_at,
   enchantments:item_enchantments(level, enchantment:enchantments(label)),
   effects:item_item_effects(effect:item_effects(label)),
   images:item_images(type, path),
-  uploader:users!items_created_by_fkey(discord_username, minecraft_username, username, display_name)`;
+  uploader:users!items_created_by_fkey(discord_username, minecraft_username)`;
 
 function buildSearchFilter(term: string): string {
   const parts: string[] = [];
