@@ -29,6 +29,7 @@ const rarityColorMap = new Map<string, number>([
   ['common', 0x95a5a6],
 ]);
 const DEFAULT_RARITY_COLOR = 0x00e6cc;
+const DEFAULT_IMAGE_BUCKET = 'item-assets';
 
 const numberFormatter = new Intl.NumberFormat('de-DE', {
   maximumFractionDigits: 0,
@@ -158,8 +159,26 @@ function resolveImageUrl(image: ItemImageRow | null): string | null {
   }
 
   const normalizedBase = baseUrl.replace(/\/+$/, '');
-  const normalizedPath = candidate.replace(/^\/+/, '');
-  const encodedPath = normalizedPath
+  const normalizedPath = candidate.replace(/^\/+/, '').trim();
+  if (!normalizedPath) {
+    return null;
+  }
+
+  const configuredBucket = (process.env.SUPABASE_ITEM_IMAGE_BUCKET ?? process.env.PUBLIC_SUPABASE_ITEM_IMAGE_BUCKET ?? '').trim();
+  const bucket = configuredBucket || DEFAULT_IMAGE_BUCKET;
+  const sanitizedBucket = bucket.replace(/^\/+|\/+$/g, '');
+
+  let pathWithoutPrefix = normalizedPath;
+  if (/^public\//i.test(pathWithoutPrefix)) {
+    pathWithoutPrefix = pathWithoutPrefix.slice(7);
+  }
+
+  const hasBucketPrefix = sanitizedBucket
+    ? pathWithoutPrefix.toLowerCase().startsWith(`${sanitizedBucket.toLowerCase()}/`)
+    : false;
+  const storagePath = hasBucketPrefix ? pathWithoutPrefix : `${sanitizedBucket}/${pathWithoutPrefix}`;
+
+  const encodedPath = storagePath
     .split('/')
     .map(segment => {
       const trimmed = segment.trim();
