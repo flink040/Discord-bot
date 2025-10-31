@@ -8,6 +8,7 @@ import {
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { getModerationChannelId, sendModerationMessage } from '../utils/moderation';
+import { fetchModFeatureState } from '../utils/guild-feature-settings';
 
 const MAX_BULK_DELETE_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days in ms
 
@@ -118,6 +119,28 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       flags: MessageFlags.Ephemeral,
     });
     return;
+  }
+
+  if (interaction.guildId) {
+    try {
+      const modState = await fetchModFeatureState(interaction.guildId);
+      if (modState !== 'enable') {
+        await interaction.reply({
+          content:
+            '❌ Dieser Befehl ist deaktiviert, solange die Moderationsfunktionen ausgeschaltet sind. Bitte aktiviere sie mit /togglemod.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('[flush] Failed to verify moderation feature state:', error);
+      await interaction.reply({
+        content:
+          '❌ Die Moderationsfunktionen konnten nicht überprüft werden. Bitte versuche es erneut oder prüfe die Supabase-Konfiguration.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
   }
 
   if (!interaction.channel.isTextBased() || !('bulkDelete' in interaction.channel)) {
