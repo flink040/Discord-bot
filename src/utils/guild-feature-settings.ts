@@ -5,6 +5,15 @@ type FeatureColumn = 'mod_feature' | 'automod';
 export type FeatureState = 'enable' | 'disable';
 
 const DEFAULT_STATE: FeatureState = 'disable';
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const ERROR_CACHE_TTL_MS = 30 * 1000; // 30 seconds
+
+type CacheEntry = {
+  state: FeatureState;
+  expiresAt: number;
+};
+
+const featureCache = new Map<string, Map<FeatureColumn, CacheEntry>>();
 
 function normalizeGuildName(guildName: string | null | undefined): string | null {
   const trimmed = guildName?.trim();
@@ -16,6 +25,45 @@ function normalizeState(value: unknown): FeatureState {
     return 'enable';
   }
   return 'disable';
+}
+
+function getCacheMap(guildId: string): Map<FeatureColumn, CacheEntry> {
+  let byGuild = featureCache.get(guildId);
+  if (!byGuild) {
+    byGuild = new Map();
+    featureCache.set(guildId, byGuild);
+  }
+  return byGuild;
+}
+
+function readCacheEntry(guildId: string, column: FeatureColumn, now: number): CacheEntry | null {
+  const byGuild = featureCache.get(guildId);
+  if (!byGuild) {
+    return null;
+  }
+  const entry = byGuild.get(column);
+  if (!entry) {
+    return null;
+  }
+  if (entry.expiresAt <= now) {
+    byGuild.delete(column);
+    if (byGuild.size === 0) {
+      featureCache.delete(guildId);
+    }
+    return null;
+  }
+  return entry;
+}
+
+function writeCacheEntry(
+  guildId: string,
+  column: FeatureColumn,
+  state: FeatureState,
+  ttl: number,
+  now: number,
+) {
+  const byGuild = getCacheMap(guildId);
+  byGuild.set(column, { state, expiresAt: now + ttl });
 }
 
 async function getFeatureState(guildId: string, column: FeatureColumn): Promise<FeatureState> {
@@ -34,6 +82,27 @@ async function getFeatureState(guildId: string, column: FeatureColumn): Promise<
   const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
   const value = record ? record[column] : null;
   return normalizeState(value);
+}
+
+async function getFeatureStateCached(
+  guildId: string,
+  column: FeatureColumn,
+): Promise<FeatureState> {
+  const now = Date.now();
+  const cached = readCacheEntry(guildId, column, now);
+  if (cached) {
+    return cached.state;
+  }
+
+  try {
+    const state = await getFeatureState(guildId, column);
+    writeCacheEntry(guildId, column, state, CACHE_TTL_MS, now);
+    return state;
+  } catch (error) {
+    console.error('[guild-features] Failed to fetch cached feature state:', error);
+    writeCacheEntry(guildId, column, DEFAULT_STATE, ERROR_CACHE_TTL_MS, now);
+    return DEFAULT_STATE;
+  }
 }
 
 async function setFeatureState(
@@ -83,6 +152,10 @@ export async function fetchAutomodState(guildId: string): Promise<FeatureState> 
   }
 }
 
+export async function getCachedAutomodState(guildId: string): Promise<FeatureState> {
+  return await getFeatureStateCached(guildId, 'automod');
+}
+
 export async function updateModFeatureState(
   guildId: string,
   state: FeatureState,
@@ -103,6 +176,7 @@ export async function updateAutomodState(
 ): Promise<void> {
   try {
     await setFeatureState(guildId, 'automod', state, guildName ?? null);
+    writeCacheEntry(guildId, 'automod', state, CACHE_TTL_MS, Date.now());
   } catch (error) {
     console.error('[guild-features] Failed to update automod state:', error);
     throw error;
