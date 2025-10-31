@@ -159,7 +159,19 @@ function resolveImageUrl(image: ItemImageRow | null): string | null {
 
   const normalizedBase = baseUrl.replace(/\/+$/, '');
   const normalizedPath = candidate.replace(/^\/+/, '');
-  return `${normalizedBase}/storage/v1/object/public/${normalizedPath}`;
+  const encodedPath = normalizedPath
+    .split('/')
+    .map(segment => {
+      const trimmed = segment.trim();
+      if (!trimmed) return '';
+      try {
+        return encodeURIComponent(decodeURIComponent(trimmed));
+      } catch {
+        return encodeURIComponent(trimmed);
+      }
+    })
+    .join('/');
+  return `${normalizedBase}/storage/v1/object/public/${encodedPath}`;
 }
 
 function deriveUploaderName(relation: ItemRelation<{
