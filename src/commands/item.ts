@@ -30,7 +30,7 @@ const rarityColorMap = new Map<string, number>([
 ]);
 const DEFAULT_RARITY_COLOR = 0x00e6cc;
 
-const priceFormatter = new Intl.NumberFormat('de-DE', {
+const numberFormatter = new Intl.NumberFormat('de-DE', {
   maximumFractionDigits: 0,
 });
 const dateFormatter = new Intl.DateTimeFormat('de-DE');
@@ -61,8 +61,6 @@ type ItemImageRow = {
   path: string | null;
 };
 
-type PriceRow = Record<string, number | string | null>;
-
 type ItemRow = {
   id: string;
   slug: string | null;
@@ -82,7 +80,6 @@ type ItemRow = {
     effect: ItemRelation<{ label: string | null }>;
   }>;
   images: ItemRelation<ItemImageRow>;
-  price: ItemRelation<PriceRow>;
   uploader: ItemRelation<{
     discord_username: string | null;
     minecraft_username: string | null;
@@ -93,16 +90,8 @@ type ItemRow = {
 
 type ImageType = 'lore' | 'ingame';
 
-type NormalizedPrice = {
-  min: number | null;
-  avg: number | null;
-  max: number | null;
-  count30d: number | null;
-};
-
 type NormalizedItem = {
   id: string;
-  slug: string | null;
   name: string;
   rarityLabel: string | null;
   raritySlug: string | null;
@@ -115,13 +104,12 @@ type NormalizedItem = {
   images: Partial<Record<ImageType, string | null>>;
   preferredImage: string | null;
   defaultImageType: ImageType | null;
-  price: NormalizedPrice | null;
   uploaderName: string | null;
   createdAt: Date | null;
   viewCount: number | null;
 };
 
-type TabId = 'details' | 'enchantments' | 'effects' | 'prices' | 'images';
+type TabId = 'details' | 'enchantments' | 'effects' | 'images';
 
 type ItemState = {
   item: NormalizedItem;
@@ -156,38 +144,6 @@ function parseNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
-}
-
-function normalizePrice(raw: PriceRow | null): NormalizedPrice | null {
-  if (!raw) return null;
-  const min =
-    parseNumber(raw.min) ??
-    parseNumber((raw as Record<string, unknown>).min_price) ??
-    parseNumber((raw as Record<string, unknown>).minimum) ??
-    parseNumber((raw as Record<string, unknown>).price_min);
-  const avg =
-    parseNumber(raw.avg) ??
-    parseNumber((raw as Record<string, unknown>).average) ??
-    parseNumber((raw as Record<string, unknown>).avg_price) ??
-    parseNumber((raw as Record<string, unknown>).price_avg);
-  const max =
-    parseNumber(raw.max) ??
-    parseNumber((raw as Record<string, unknown>).max_price) ??
-    parseNumber((raw as Record<string, unknown>).maximum) ??
-    parseNumber((raw as Record<string, unknown>).price_max);
-  const countValue =
-    parseNumber(raw.count30d) ??
-    parseNumber((raw as Record<string, unknown>).count_30d) ??
-    parseNumber((raw as Record<string, unknown>).sales_30d) ??
-    parseNumber((raw as Record<string, unknown>).count) ??
-    parseNumber((raw as Record<string, unknown>).sales);
-  const count30d = countValue === null ? null : Math.round(countValue);
-
-  if (min === null && avg === null && max === null && count30d === null) {
-    return null;
-  }
-
-  return { min, avg, max, count30d };
 }
 
 function resolveImageUrl(image: ItemImageRow | null): string | null {
@@ -251,8 +207,6 @@ function normalizeItem(row: ItemRow): NormalizedItem {
     defaultImageType = 'lore';
   }
 
-  const price = normalizePrice(unwrapSingle(row.price));
-
   const enchantments = relationToArray(row.enchantments)
     .map(entry => {
       const info = unwrapSingle(entry.enchantment);
@@ -284,7 +238,6 @@ function normalizeItem(row: ItemRow): NormalizedItem {
 
   return {
     id: row.id,
-    slug: row.slug,
     name: row.name,
     rarityLabel: rarity?.label ?? null,
     raritySlug: rarity?.slug ?? null,
@@ -300,7 +253,6 @@ function normalizeItem(row: ItemRow): NormalizedItem {
     },
     preferredImage,
     defaultImageType,
-    price,
     uploaderName: deriveUploaderName(row.uploader),
     createdAt: validCreatedAt,
     viewCount,
@@ -308,8 +260,7 @@ function normalizeItem(row: ItemRow): NormalizedItem {
 }
 
 function buildItemUrl(item: NormalizedItem): string {
-  const slugOrId = (item.slug ?? item.id).trim();
-  return `${ITEM_URL_BASE}/${encodeURIComponent(slugOrId)}`;
+  return `${ITEM_URL_BASE}/${encodeURIComponent(item.id.trim())}`;
 }
 
 function formatDetailsField(item: NormalizedItem): string {
@@ -371,32 +322,6 @@ function buildEffectsValue(item: NormalizedItem): string | null {
   return item.effects.map(effect => `• ${effect}`).join('\n');
 }
 
-function formatPriceValue(item: NormalizedItem): string {
-  if (!item.price) {
-    return 'Für dieses Item liegen noch keine Preisdaten vor.';
-  }
-  const { min, avg, max, count30d } = item.price;
-  const values = [min, avg, max];
-  if (values.every(value => value === null)) {
-    return 'Für dieses Item liegen noch keine Preisdaten vor.';
-  }
-
-  const formatCurrency = (value: number | null): string =>
-    value === null ? '—' : `${priceFormatter.format(Math.round(value))} ⛃`;
-
-  const lines = [
-    `**Minimum:** ${formatCurrency(min)}`,
-    `**Durchschnitt:** ${formatCurrency(avg)}`,
-    `**Maximum:** ${formatCurrency(max)}`,
-  ];
-
-  if (count30d !== null) {
-    lines.push(`**Auswertung (30 Tage):** ${priceFormatter.format(count30d)} Verkäufe`);
-  }
-
-  return lines.join('\n');
-}
-
 function buildImagesDescription(item: NormalizedItem, activeImage: ImageType | null): string {
   const available = [item.images.ingame, item.images.lore].filter(Boolean).length;
   if (available === 0) {
@@ -418,7 +343,7 @@ function buildFooter(item: NormalizedItem): string | null {
     parts.push(dateFormatter.format(item.createdAt));
   }
   if (typeof item.viewCount === 'number') {
-    parts.push(`${priceFormatter.format(item.viewCount)} Aufrufe`);
+    parts.push(`${numberFormatter.format(item.viewCount)} Aufrufe`);
   }
   if (parts.length === 0) {
     return null;
@@ -475,10 +400,6 @@ function buildEmbed(state: ItemState): EmbedBuilder {
       }
       break;
     }
-    case 'prices': {
-      embed.addFields({ name: 'Preise', value: formatPriceValue(item) });
-      break;
-    }
     case 'images': {
       embed.setDescription(buildImagesDescription(item, activeImage));
       break;
@@ -506,11 +427,6 @@ function createTabButtons(state: ItemState, disabled: boolean): ActionRowBuilder
       .setCustomId(`${COMMAND_ID}:tab:effects`)
       .setLabel('Effekte')
       .setStyle(state.activeTab === 'effects' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setDisabled(disabled),
-    new ButtonBuilder()
-      .setCustomId(`${COMMAND_ID}:tab:prices`)
-      .setLabel('Preise')
-      .setStyle(state.activeTab === 'prices' ? ButtonStyle.Primary : ButtonStyle.Secondary)
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId(`${COMMAND_ID}:tab:images`)
@@ -569,7 +485,7 @@ function looksLikeUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-const ITEM_SELECT = `id, slug, name, origin, view_count, created_at,
+const ITEM_SELECT = `id, name, origin, view_count, created_at,
   rarity:rarities(label, slug),
   item_type:item_types(label, slug),
   chest:chests(label),
@@ -577,7 +493,6 @@ const ITEM_SELECT = `id, slug, name, origin, view_count, created_at,
   enchantments:item_enchantments(level, enchantment:enchantments(label)),
   effects:item_item_effects(effect:item_effects(label)),
   images:item_images(type, path),
-  price:item_price_stats(*),
   uploader:users!items_created_by_fkey(discord_username, minecraft_username, username, display_name)`;
 
 function buildSearchFilter(term: string): string {
@@ -585,8 +500,6 @@ function buildSearchFilter(term: string): string {
   const escapedLike = escapeLikePattern(term);
   const escapedFilterValue = escapeFilterValue(term);
   parts.push(`name.ilike.%${escapedLike}%`);
-  parts.push(`slug.ilike.%${escapedLike}%`);
-  parts.push(`slug.eq.${escapedFilterValue}`);
   if (looksLikeUuid(term)) {
     parts.push(`id.eq.${escapedFilterValue}`);
   }
@@ -611,7 +524,7 @@ async function fetchItem(term: string): Promise<ItemRow | null> {
   return data ?? null;
 }
 
-async function searchItems(term: string, limit: number): Promise<Array<{ id: string; name: string; slug: string | null }>> {
+async function searchItems(term: string, limit: number): Promise<Array<{ id: string; name: string }>> {
   const client = createItemSupabaseClient();
   const filter = buildSearchFilter(term);
   const controller = new AbortController();
@@ -622,7 +535,7 @@ async function searchItems(term: string, limit: number): Promise<Array<{ id: str
   try {
     const { data, error } = await client
       .from('items')
-      .select('id, name, slug')
+      .select('id, name')
       .eq('status', 'approved')
       .or(filter)
       .order('name', { ascending: true })
@@ -633,7 +546,7 @@ async function searchItems(term: string, limit: number): Promise<Array<{ id: str
       throw error;
     }
 
-    return (data ?? []).map(row => ({ id: row.id, name: row.name, slug: row.slug ?? null }));
+    return (data ?? []).map(row => ({ id: row.id, name: row.name }));
   } finally {
     clearTimeout(timeout);
   }
@@ -681,7 +594,7 @@ export const data = new SlashCommandBuilder()
   .addStringOption(option =>
     option
       .setName('suche')
-      .setDescription('Suche nach Name, Slug oder ID')
+      .setDescription('Suche nach Name oder ID')
       .setRequired(true)
       .setAutocomplete(true),
   );
@@ -726,7 +639,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 };
 
 function isTabId(value: string): value is TabId {
-  return ['details', 'enchantments', 'effects', 'prices', 'images'].includes(value);
+  return ['details', 'enchantments', 'effects', 'images'].includes(value);
 }
 
 function isImageType(value: string): value is ImageType {
@@ -783,17 +696,14 @@ export const handleAutocomplete = async (interaction: AutocompleteInteraction) =
     const uniqueValues = new Set<string>();
     const options = matches
       .map(match => {
-        const optionValue = match.slug?.trim() || match.id;
+        const optionValue = match.id;
         if (uniqueValues.has(optionValue)) {
           return null;
         }
         uniqueValues.add(optionValue);
-        const labelParts = [match.name.trim()];
-        if (match.slug && match.slug.trim() && match.slug.trim() !== match.name.trim()) {
-          labelParts.push(`• ${match.slug.trim()}`);
-        }
+        const label = match.name.trim() || match.id;
         return {
-          name: labelParts.join(' '),
+          name: label,
           value: optionValue,
         };
       })
