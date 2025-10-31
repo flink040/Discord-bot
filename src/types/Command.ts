@@ -1,8 +1,8 @@
-
 import type {
   RESTPostAPIChatInputApplicationCommandsJSONBody,
   ChatInputCommandInteraction,
   MessageComponentInteraction,
+  AutocompleteInteraction,
 } from 'discord.js';
 
 export interface CommandDef {
@@ -13,4 +13,5 @@ export interface CommandDef {
    */
   enabled?: boolean;
   handleComponent?: (interaction: MessageComponentInteraction) => Promise<void>;
+  handleAutocomplete?: (interaction: AutocompleteInteraction) => Promise<void>;
 }
