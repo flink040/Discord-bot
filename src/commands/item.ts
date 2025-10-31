@@ -145,40 +145,80 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
-function resolveImageUrl(image: ItemImageRow | null): string | null {
-  if (!image) return null;
-  const candidate = image.path;
-  if (!candidate) return null;
-  if (/^https?:\/\//i.test(candidate)) {
-    return candidate;
-  }
+type StorageLocation = {
+  bucket: string;
+  path: string;
+};
 
-  const baseUrl = (process.env.PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '').trim();
-  if (!baseUrl) {
-    return null;
-  }
+const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour
 
-  const normalizedBase = baseUrl.replace(/\/+$/, '');
-  const normalizedPath = candidate.replace(/^\/+/, '').trim();
+function sanitizeBucket(value: string): string {
+  return value.replace(/^\/+|\/+$/g, '').trim();
+}
+
+function resolveConfiguredBucket(): string | null {
+  const configured = (process.env.SUPABASE_ITEM_IMAGE_BUCKET ?? process.env.PUBLIC_SUPABASE_ITEM_IMAGE_BUCKET ?? '').trim();
+  const bucket = sanitizeBucket(configured || DEFAULT_IMAGE_BUCKET);
+  return bucket || null;
+}
+
+function normalizeStoragePath(rawPath: string): string {
+  return rawPath
+    .trim()
+    .replace(/\?.*$/, '')
+    .replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/(?:public|sign)\//i, '')
+    .replace(/^storage\/v1\/object\/(?:public|sign)\//i, '')
+    .replace(/^public\//i, '')
+    .replace(/^\/+/, '');
+}
+
+function buildStorageLocationCandidates(rawPath: string, fallbackBucket: string): StorageLocation[] {
+  const normalizedPath = normalizeStoragePath(rawPath);
   if (!normalizedPath) {
-    return null;
+    return [];
   }
 
-  const configuredBucket = (process.env.SUPABASE_ITEM_IMAGE_BUCKET ?? process.env.PUBLIC_SUPABASE_ITEM_IMAGE_BUCKET ?? '').trim();
-  const bucket = configuredBucket || DEFAULT_IMAGE_BUCKET;
-  const sanitizedBucket = bucket.replace(/^\/+|\/+$/g, '');
-
-  let pathWithoutPrefix = normalizedPath;
-  if (/^public\//i.test(pathWithoutPrefix)) {
-    pathWithoutPrefix = pathWithoutPrefix.slice(7);
+  const segments = normalizedPath.split('/').filter(Boolean);
+  if (segments.length === 0) {
+    return [];
   }
 
-  const hasBucketPrefix = sanitizedBucket
-    ? pathWithoutPrefix.toLowerCase().startsWith(`${sanitizedBucket.toLowerCase()}/`)
-    : false;
-  const storagePath = hasBucketPrefix ? pathWithoutPrefix : `${sanitizedBucket}/${pathWithoutPrefix}`;
+  const fallback = sanitizeBucket(fallbackBucket);
+  const candidates: StorageLocation[] = [];
+  const seen = new Set<string>();
 
-  const encodedPath = storagePath
+  const pushCandidate = (bucket: string, pathSegments: string[]) => {
+    const sanitizedBucket = sanitizeBucket(bucket);
+    const path = pathSegments.filter(Boolean).join('/');
+    if (!sanitizedBucket || !path) {
+      return;
+    }
+    const key = `${sanitizedBucket.toLowerCase()}/${path.toLowerCase()}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    candidates.push({ bucket: sanitizedBucket, path });
+  };
+
+  if (fallback) {
+    if (segments[0].toLowerCase() === fallback.toLowerCase()) {
+      pushCandidate(segments[0], segments.slice(1));
+    }
+    pushCandidate(fallback, segments);
+  }
+
+  if (segments.length > 1) {
+    pushCandidate(segments[0], segments.slice(1));
+  } else if (fallback) {
+    pushCandidate(fallback, segments);
+  }
+
+  return candidates;
+}
+
+function encodeStoragePath(path: string): string {
+  return path
     .split('/')
     .map(segment => {
       const trimmed = segment.trim();
@@ -190,7 +230,92 @@ function resolveImageUrl(image: ItemImageRow | null): string | null {
       }
     })
     .join('/');
+}
+
+function buildPublicStorageUrl(rawPath: string, fallbackBucket: string): string | null {
+  const baseUrl = (process.env.PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? '').trim();
+  if (!baseUrl) {
+    return null;
+  }
+
+  const normalizedBase = baseUrl.replace(/\/+$/, '');
+  const sanitizedBucket = sanitizeBucket(fallbackBucket);
+  if (!sanitizedBucket) {
+    return null;
+  }
+
+  const normalizedPath = normalizeStoragePath(rawPath);
+  if (!normalizedPath) {
+    return null;
+  }
+
+  const segments = normalizedPath.split('/').filter(Boolean);
+  if (segments.length === 0) {
+    return null;
+  }
+
+  let pathSegments = segments;
+  if (segments[0].toLowerCase() === sanitizedBucket.toLowerCase()) {
+    pathSegments = segments.slice(1);
+  }
+
+  const encodedPath = encodeStoragePath([sanitizedBucket, ...pathSegments].join('/'));
+  if (!encodedPath) {
+    return null;
+  }
+
   return `${normalizedBase}/storage/v1/object/public/${encodedPath}`;
+}
+
+async function resolveImageUrl(image: ItemImageRow | null): Promise<string | null> {
+  if (!image) return null;
+  const candidate = image.path?.trim();
+  if (!candidate) return null;
+  if (/^https?:\/\//i.test(candidate)) {
+    return candidate;
+  }
+
+  const configuredBucket = resolveConfiguredBucket();
+  if (!configuredBucket) {
+    return null;
+  }
+
+  const candidates = buildStorageLocationCandidates(candidate, configuredBucket);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const client = createItemSupabaseClient();
+
+  for (const location of candidates) {
+    try {
+      const { data, error } = await client.storage
+        .from(location.bucket)
+        .createSignedUrl(location.path, SIGNED_URL_TTL_SECONDS);
+      if (error) {
+        console.error(
+          `[command:${COMMAND_ID}] Failed to sign storage object ${location.bucket}/${location.path}:`,
+          error,
+        );
+        continue;
+      }
+      if (data?.signedUrl) {
+        return data.signedUrl;
+      }
+    } catch (err) {
+      console.error(
+        `[command:${COMMAND_ID}] Unexpected error while signing storage object ${location.bucket}/${location.path}:`,
+        err,
+      );
+    }
+  }
+
+  const fallbackPublicUrl = buildPublicStorageUrl(candidate, configuredBucket);
+  if (fallbackPublicUrl) {
+    return fallbackPublicUrl;
+  }
+
+  return null;
 }
 
 function deriveUploaderName(relation: ItemRelation<{
@@ -212,15 +337,17 @@ function deriveUploaderName(relation: ItemRelation<{
   return null;
 }
 
-function normalizeItem(row: ItemRow): NormalizedItem {
+async function normalizeItem(row: ItemRow): Promise<NormalizedItem> {
   const rarity = unwrapSingle(row.rarity);
   const itemType = unwrapSingle(row.item_type);
   const chest = unwrapSingle(row.chest);
   const images = relationToArray(row.images);
   const loreImage = images.find(image => image?.type === 'lore') ?? null;
   const ingameImage = images.find(image => image?.type === 'ingame') ?? null;
-  const loreUrl = resolveImageUrl(loreImage);
-  const ingameUrl = resolveImageUrl(ingameImage);
+  const [loreUrl, ingameUrl] = await Promise.all([
+    resolveImageUrl(loreImage),
+    resolveImageUrl(ingameImage),
+  ]);
 
   let preferredImage: string | null = null;
   let defaultImageType: ImageType | null = null;
@@ -640,7 +767,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const item = normalizeItem(itemRow);
+    const item = await normalizeItem(itemRow);
     const state: ItemState = {
       item,
       activeTab: 'details',
