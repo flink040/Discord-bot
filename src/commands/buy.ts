@@ -11,10 +11,10 @@ const data = new SlashCommandBuilder()
   .setDescription('Fügt ein Item zu deinen Marktplatz-Gesuchen hinzu.')
   .addStringOption(option =>
     option
-      .setName('item_id')
-      .setDescription('ID des Items, das du suchst.')
+      .setName('item')
+      .setDescription('Name oder ID des Items, das du suchst.')
       .setRequired(true)
-      .setMaxLength(64),
+      .setMaxLength(128),
   )
   .addIntegerOption(option =>
     option
@@ -71,13 +71,37 @@ async function fetchUserId(discordId: string): Promise<UserRow | null> {
   return row ?? null;
 }
 
-async function fetchItem(itemId: string): Promise<ItemRow | null> {
+function escapeLikePattern(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+async function fetchItem(term: string): Promise<ItemRow | null> {
   const supabase = getSupabaseClient();
+
+  const { data: exactRow, error: exactError } = await supabase
+    .from('items')
+    .select('id, name')
+    .eq('status', 'approved')
+    .eq('id', term)
+    .maybeSingle<ItemRow>();
+
+  if (exactError && exactError.code !== 'PGRST116') {
+    throw exactError;
+  }
+
+  if (exactRow) {
+    return exactRow;
+  }
+
+  const escapedLike = escapeLikePattern(term);
+
   const { data: row, error } = await supabase
     .from('items')
     .select('id, name')
-    .eq('id', itemId)
     .eq('status', 'approved')
+    .ilike('name', `%${escapedLike}%`)
+    .order('name', { ascending: true })
+    .limit(1)
     .maybeSingle<ItemRow>();
 
   if (error && error.code !== 'PGRST116') {
@@ -119,12 +143,12 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     return;
   }
 
-  const itemIdRaw = interaction.options.getString('item_id', true);
-  const itemId = itemIdRaw.trim();
+  const itemTermRaw = interaction.options.getString('item', true);
+  const itemTerm = itemTermRaw.trim();
 
-  if (!itemId) {
+  if (!itemTerm) {
     await interaction.reply({
-      content: '❌ Bitte gib eine gültige Item-ID an.',
+      content: '❌ Bitte gib ein gültiges Item an.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -155,7 +179,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       return;
     }
 
-    const itemRow = await fetchItem(itemId);
+    const itemRow = await fetchItem(itemTerm);
     if (!itemRow) {
       await interaction.editReply('❌ Dieses Item konnte nicht gefunden werden oder ist noch nicht freigeschaltet.');
       return;
