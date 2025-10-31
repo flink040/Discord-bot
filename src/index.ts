@@ -163,6 +163,22 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
   });
 
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
+    if (interaction.isAutocomplete()) {
+      const cmd = commands.get(interaction.commandName);
+      if (!cmd || typeof cmd.handleAutocomplete !== 'function') {
+        await interaction.respond([]).catch(() => {});
+        return;
+      }
+
+      try {
+        await cmd.handleAutocomplete(interaction);
+      } catch (err) {
+        console.error(`[autocomplete:${interaction.commandName}]`, err);
+        await interaction.respond([]).catch(() => {});
+      }
+      return;
+    }
+
     if (interaction.isChatInputCommand()) {
       const cmd = commands.get(interaction.commandName);
       if (!cmd) {
