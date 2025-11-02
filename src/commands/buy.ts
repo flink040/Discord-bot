@@ -35,18 +35,6 @@ const data = new SlashCommandBuilder()
       .setName('price_max')
       .setDescription('Maximaler Preis in Smaragden (optional).')
       .setMinValue(0),
-  )
-  .addStringOption(option =>
-    option
-      .setName('contact')
-      .setDescription('Wie man dich erreichen kann (optional).')
-      .setMaxLength(180),
-  )
-  .addStringOption(option =>
-    option
-      .setName('notes')
-      .setDescription('Weitere Informationen zu deinem Gesuch (optional).')
-      .setMaxLength(2000),
   );
 
 type UserRow = {
@@ -187,12 +175,6 @@ async function findExistingIntent(userId: string, itemId: string) {
   return row ?? null;
 }
 
-function normalizeString(value: string | null): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 export const execute = async (interaction: ChatInputCommandInteraction) => {
   if (!interaction.inCachedGuild()) {
     await interaction.reply({
@@ -216,9 +198,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   const quantity = interaction.options.getInteger('quantity');
   const priceMin = interaction.options.getInteger('price_min');
   const priceMax = interaction.options.getInteger('price_max');
-  const contact = normalizeString(interaction.options.getString('contact'));
-  const notes = normalizeString(interaction.options.getString('notes'));
-
   if (priceMin !== null && priceMax !== null && priceMin > priceMax) {
     await interaction.reply({
       content: '❌ Der minimale Preis darf nicht höher als der maximale Preis sein.',
@@ -248,8 +227,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       quantity: quantity ?? null,
       price_min: priceMin ?? null,
       price_max: priceMax ?? null,
-      contact_method: contact,
-      notes,
       is_active: true,
     } as const;
 
