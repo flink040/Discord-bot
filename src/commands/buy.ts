@@ -1,6 +1,7 @@
 import {
   MessageFlags,
   SlashCommandBuilder,
+  type AutocompleteInteraction,
   type ChatInputCommandInteraction,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
@@ -14,7 +15,8 @@ const data = new SlashCommandBuilder()
       .setName('item')
       .setDescription('Name oder ID des Items, das du suchst.')
       .setRequired(true)
-      .setMaxLength(128),
+      .setMaxLength(128)
+      .setAutocomplete(true),
   )
   .addIntegerOption(option =>
     option
@@ -132,6 +134,40 @@ async function fetchItem(term: string): Promise<ItemRow | null> {
   }
 
   return row ?? null;
+}
+
+async function searchItems(term: string, limit: number): Promise<Array<{ id: string; name: string }>> {
+  const supabase = getSupabaseClient();
+  const escapedLike = escapeLikePattern(term);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_500);
+
+  try {
+    const { data, error } = await supabase
+      .from('items')
+      .select('id, name')
+      .eq('status', 'approved')
+      .or(
+        [
+          `name.ilike.%${escapedLike}%`,
+          isUuid(term) ? `id.eq.${term}` : null,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(','),
+      )
+      .order('name', { ascending: true })
+      .limit(limit)
+      .abortSignal(controller.signal);
+
+    if (error) {
+      throw error;
+    }
+
+    return (data ?? []).map(row => ({ id: row.id, name: row.name }));
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function findExistingIntent(userId: string, itemId: string) {
@@ -254,4 +290,39 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 };
 
-export default { data: data.toJSON(), execute } satisfies CommandDef;
+export const handleAutocomplete = async (interaction: AutocompleteInteraction) => {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== 'item') {
+    await interaction.respond([]).catch(() => {});
+    return;
+  }
+
+  const term = String(focused.value ?? '').trim();
+  if (!term) {
+    await interaction.respond([]).catch(() => {});
+    return;
+  }
+
+  try {
+    const matches = await searchItems(term, 20);
+    const unique = new Set<string>();
+    const options = matches
+      .map(match => {
+        if (unique.has(match.id)) {
+          return null;
+        }
+        unique.add(match.id);
+        const label = match.name.trim() || match.id;
+        return { name: label.slice(0, 100), value: match.id };
+      })
+      .filter((option): option is { name: string; value: string } => Boolean(option))
+      .slice(0, 20);
+
+    await interaction.respond(options);
+  } catch (error) {
+    console.error('[buy] Failed to provide autocomplete options', error);
+    await interaction.respond([]).catch(() => {});
+  }
+};
+
+export default { data: data.toJSON(), execute, handleAutocomplete } satisfies CommandDef;
