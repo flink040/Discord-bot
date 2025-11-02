@@ -8,12 +8,12 @@ import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
 const data = new SlashCommandBuilder()
-  .setName('buy')
-  .setDescription('Fügt ein Item zu deinen Marktplatz-Gesuchen hinzu.')
+  .setName('sell')
+  .setDescription('Fügt ein Item zu deinen Marktplatz-Angeboten hinzu.')
   .addStringOption(option =>
     option
       .setName('item')
-      .setDescription('Name oder ID des Items, das du suchst.')
+      .setDescription('Name oder ID des Items, das du verkaufen möchtest.')
       .setRequired(true)
       .setMaxLength(128)
       .setAutocomplete(true),
@@ -21,7 +21,7 @@ const data = new SlashCommandBuilder()
   .addIntegerOption(option =>
     option
       .setName('quantity')
-      .setDescription('Gewünschte Stückzahl (optional).')
+      .setDescription('Stückzahl, die du verkaufen möchtest (optional).')
       .setMinValue(1),
   )
   .addIntegerOption(option =>
@@ -165,7 +165,7 @@ async function findExistingIntent(userId: string, itemId: string) {
     .select('id')
     .eq('user_id', userId)
     .eq('item_id', itemId)
-    .eq('intent_type', 'buy')
+    .eq('intent_type', 'sell')
     .maybeSingle<{ id: string }>();
 
   if (error && error.code !== 'PGRST116') {
@@ -244,7 +244,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       }
 
       await interaction.editReply(
-        `✅ Dein Gesuch für **${itemRow.name}** wurde aktualisiert und ist nun aktiv.`,
+        `✅ Dein Angebot für **${itemRow.name}** wurde aktualisiert und ist nun aktiv.`,
       );
       return;
     }
@@ -252,7 +252,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     const { error: insertError } = await supabase.from('item_trade_intents').insert({
       item_id: itemRow.id,
       user_id: userRow.id,
-      intent_type: 'buy',
+      intent_type: 'sell',
       ...payload,
     });
 
@@ -260,10 +260,10 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       throw insertError;
     }
 
-    await interaction.editReply(`✅ **${itemRow.name}** wurde zu deinen Gesuchen hinzugefügt.`);
+    await interaction.editReply(`✅ **${itemRow.name}** wurde zu deinen Angeboten hinzugefügt.`);
   } catch (error) {
-    console.error('[buy] Failed to process request', error);
-    await interaction.editReply('❌ Beim Speichern deines Gesuchs ist ein Fehler aufgetreten. Bitte versuche es später erneut.');
+    console.error('[sell] Failed to process request', error);
+    await interaction.editReply('❌ Beim Speichern deines Angebots ist ein Fehler aufgetreten. Bitte versuche es später erneut.');
   }
 };
 
@@ -297,7 +297,7 @@ export const handleAutocomplete = async (interaction: AutocompleteInteraction) =
 
     await interaction.respond(options);
   } catch (error) {
-    console.error('[buy] Failed to provide autocomplete options', error);
+    console.error('[sell] Failed to provide autocomplete options', error);
     await interaction.respond([]).catch(() => {});
   }
 };
