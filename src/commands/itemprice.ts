@@ -3,13 +3,12 @@ import {
   EmbedBuilder,
   AttachmentBuilder,
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   MessageFlags,
   StringSelectMenuBuilder,
   type ChatInputCommandInteraction,
   type MessageComponentInteraction,
   type MessageEditAttachmentData,
+  type AutocompleteInteraction,
 } from 'discord.js';
 import {
   Chart,
@@ -34,7 +33,6 @@ function displayCurrency(currency: string | null): string | null {
 const COMMAND_ID = 'itemprice';
 
 type ViewMode = '7d' | '30d' | 'all';
-type DisplayMode = 'raw' | 'avg' | 'both';
 
 type ItemRow = {
   id: string;
@@ -67,6 +65,7 @@ export const data = new SlashCommandBuilder()
       .setName('name')
       .setDescription('Name des Items (Teilzeichenfolge)')
       .setRequired(true)
+      .setAutocomplete(true)
   );
 
 async function findItemByName(name: string): Promise<ItemRow | null> {
@@ -101,6 +100,48 @@ async function fetchItemById(id: string): Promise<ItemRow | null> {
   }
 
   return row ?? null;
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/[%_\\]/g, match => `\\${match}`);
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(value);
+}
+
+async function searchItems(term: string, limit: number): Promise<Array<{ id: string; name: string }>> {
+  const supabase = getSupabaseClient();
+  const escapedLike = escapeLikePattern(term);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_500);
+
+  try {
+    const { data, error } = await supabase
+      .from('items')
+      .select('id, name')
+      .eq('status', 'approved')
+      .or(
+        [
+          `name.ilike.%${escapedLike}%`,
+          isUuid(term) ? `id.eq.${term}` : null,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(','),
+      )
+      .order('name', { ascending: true })
+      .limit(limit)
+      .abortSignal(controller.signal);
+
+    if (error) {
+      throw error;
+    }
+
+    return (data ?? []).map(row => ({ id: row.id, name: row.name }));
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function fetchMarketLinks(itemId: string): Promise<MarketLinkRow[]> {
@@ -216,12 +257,6 @@ const viewLabels: Record<ViewMode, string> = {
   '7d': '7 Tage',
   '30d': '30 Tage',
   all: 'Gesamt',
-};
-
-const displayModeLabels: Record<DisplayMode, string> = {
-  raw: 'Rohdaten',
-  avg: 'Durchschnitt',
-  both: 'Rohdaten + Durchschnitt',
 };
 
 function filterSamplesByView(samples: BidSample[], view: ViewMode): BidSample[] {
@@ -364,59 +399,34 @@ async function renderPriceChart(options: {
   samples: BidSample[];
   currency: string | null;
   view: ViewMode;
-  mode: DisplayMode;
 }): Promise<Buffer | null> {
-  const { samples, currency, view, mode } = options;
+  const { samples, currency, view } = options;
   if (samples.length < 2) return null;
 
   const labels = samples.map(sample => chartLabelFormatter.format(sample.collectedAt));
   const suffix = displayCurrency(currency);
-  const datasetLabel = `Preis${suffix ? ` (${suffix})` : ''}`;
-
-  const datasets: ChartConfiguration<'line'>['data']['datasets'] = [];
-
-  if (mode === 'raw' || mode === 'both') {
-    datasets.push({
-      label: datasetLabel,
-      data: samples.map(sample => sample.amount),
-      borderColor: chartAccent,
-      backgroundColor: (context) => {
-        const ctx = context.chart.ctx;
-        const gradient = ctx.createLinearGradient(0, chartHeight, 0, 0);
-        gradient.addColorStop(0, 'rgba(56, 189, 248, 0.05)');
-        gradient.addColorStop(1, 'rgba(56, 189, 248, 0.35)');
-        return gradient;
-      },
-      borderWidth: 3,
-      tension: 0.3,
-      pointRadius: 3,
-      pointHoverRadius: 6,
-      pointBackgroundColor: '#ffffff',
-      pointBorderWidth: 1,
-      fill: true,
-    });
-  }
-
-  if (mode === 'avg' || mode === 'both') {
-    const averageValues = computeMovingAverage(samples, viewAverageWindowDays[view]);
-    if (averageValues.length >= 2) {
-      datasets.push({
-        label: `Gleitender Durchschnitt (${viewAverageWindowDays[view]} Tage)`,
-        data: averageValues,
-        borderColor: chartAverageAccent,
-        backgroundColor: 'rgba(249, 115, 22, 0.2)',
-        borderDash: [6, 6],
-        borderWidth: 2,
-        tension: 0.25,
-        pointRadius: 0,
-        fill: false,
-      });
-    }
-  }
-
-  if (datasets.length === 0) {
+  const averageValues = computeMovingAverage(samples, viewAverageWindowDays[view]);
+  if (averageValues.length < 2) {
     return null;
   }
+
+  const datasetLabel = `Gleitender Durchschnitt (${viewAverageWindowDays[view]} Tage${
+    suffix ? `, ${suffix}` : ''
+  })`;
+
+  const datasets: ChartConfiguration<'line'>['data']['datasets'] = [
+    {
+      label: datasetLabel,
+      data: averageValues,
+      borderColor: chartAverageAccent,
+      backgroundColor: 'rgba(249, 115, 22, 0.2)',
+      borderDash: [6, 6],
+      borderWidth: 2,
+      tension: 0.25,
+      pointRadius: 0,
+      fill: false,
+    },
+  ];
 
   const axisLabelFont: AxisLabelFont = {
     family: chartAxisFontFamily,
@@ -546,19 +556,18 @@ function buildPriceEmbed(options: {
   currency: string | null;
   summary: PriceSummary;
   view: ViewMode;
-  mode: DisplayMode;
   viewSamples: BidSample[];
   allSamples: BidSample[];
   hasChart: boolean;
 }): EmbedBuilder {
-  const { itemName, currency, summary, view, mode, viewSamples, allSamples, hasChart } = options;
+  const { itemName, currency, summary, view, viewSamples, allSamples, hasChart } = options;
   const viewLabel = viewLabels[view];
   const viewRange = formatDateRange(viewSamples);
   const overallRange = formatDateRange(allSamples);
 
   const descriptionLines = [
     `Zeitraum (${viewLabel}): ${viewRange ?? '–'}`,
-    `Darstellung: ${displayModeLabels[mode]}`,
+    'Darstellung: Durchschnitt (gleitend)',
   ];
   if (!hasChart) {
     if (viewSamples.length >= 2) {
@@ -591,16 +600,10 @@ function buildPriceEmbed(options: {
   return embed;
 }
 
-const displayModes: { mode: DisplayMode; label: string; emoji: string }[] = [
-  { mode: 'raw', label: 'Gebote', emoji: '📈' },
-  { mode: 'avg', label: 'Durchschnitt', emoji: '📊' },
-  { mode: 'both', label: 'Kombiniert', emoji: '🧮' },
-];
-
-function buildComponents(itemId: string, samples: BidSample[], state: { view: ViewMode; mode: DisplayMode }) {
+function buildComponents(itemId: string, state: { view: ViewMode }) {
   const viewRow = new ActionRowBuilder<StringSelectMenuBuilder>();
   const viewMenu = new StringSelectMenuBuilder()
-    .setCustomId(`${COMMAND_ID}:view:${itemId}:${state.mode}`)
+    .setCustomId(`${COMMAND_ID}:view:${itemId}`)
     .setPlaceholder('Zeitraum auswählen')
     .addOptions(
       (['7d', '30d', 'all'] as ViewMode[]).map(view => ({
@@ -615,21 +618,7 @@ function buildComponents(itemId: string, samples: BidSample[], state: { view: Vi
     );
   viewRow.addComponents(viewMenu);
 
-  const modeRow = new ActionRowBuilder<ButtonBuilder>();
-  const activeViewSamples = filterSamplesByView(samples, state.view);
-  const hasAverageData = activeViewSamples.length >= 2;
-  displayModes.forEach(({ mode, label, emoji }) => {
-    const disable = mode !== 'raw' && !hasAverageData;
-    modeRow.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`${COMMAND_ID}:mode:${itemId}:${state.view}:${mode}`)
-        .setLabel(`${emoji} ${label}`)
-        .setStyle(mode === state.mode ? ButtonStyle.Primary : ButtonStyle.Secondary)
-        .setDisabled(disable)
-    );
-  });
-
-  return [viewRow, modeRow] as Array<ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>>;
+  return [viewRow];
 }
 
 const chartFileName = 'price-chart.png';
@@ -640,19 +629,15 @@ async function buildViewPayload(options: {
   currency: string | null;
   allSamples: BidSample[];
   summary: PriceSummary;
-  state: { view: ViewMode; mode: DisplayMode };
+  state: { view: ViewMode };
 }) {
   const { itemId, itemName, currency, allSamples, summary, state } = options;
   const viewSamples = filterSamplesByView(allSamples, state.view);
-  const hasAverageData = viewSamples.length >= 2;
-  const resolvedMode: DisplayMode = state.mode === 'raw' || hasAverageData ? state.mode : 'raw';
-  const resolvedState = { view: state.view, mode: resolvedMode };
 
   const chartBuffer = await renderPriceChart({
     samples: viewSamples,
     currency,
-    view: resolvedState.view,
-    mode: resolvedState.mode,
+    view: state.view,
   });
   const hasChart = Boolean(chartBuffer);
 
@@ -660,8 +645,7 @@ async function buildViewPayload(options: {
     itemName,
     currency,
     summary,
-    view: resolvedState.view,
-    mode: resolvedState.mode,
+    view: state.view,
     viewSamples,
     allSamples,
     hasChart,
@@ -675,7 +659,7 @@ async function buildViewPayload(options: {
     embed.setImage(`attachment://${chartFileName}`);
   }
 
-  const components = buildComponents(itemId, allSamples, resolvedState);
+  const components = buildComponents(itemId, state);
 
   const payload = {
     embeds: [embed],
@@ -760,14 +744,13 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     }
 
     const summary = summarizeBids(dataset.bids);
-    const initialMode: DisplayMode = dataset.bids.length >= 2 ? 'both' : 'raw';
     const payload = await buildViewPayload({
       itemId: item.id,
       itemName: item.name,
       currency: dataset.currency,
       allSamples: dataset.bids,
       summary,
-      state: { view: 'all', mode: initialMode },
+      state: { view: 'all' },
     });
 
     await interaction.editReply(payload);
@@ -781,49 +764,47 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 };
 
-export const handleComponent = async (interaction: MessageComponentInteraction) => {
-  let itemId: string | undefined;
-  let state: { view: ViewMode; mode: DisplayMode } | undefined;
+export const handleAutocomplete = async (interaction: AutocompleteInteraction) => {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== 'name') {
+    await interaction.respond([]).catch(() => {});
+    return;
+  }
 
-  if (interaction.isStringSelectMenu()) {
-    const [, action, maybeItemId, maybeMode] = interaction.customId.split(':');
-    const selectedView = interaction.values[0];
-    if (
-      action !== 'view' ||
-      !maybeItemId ||
-      !maybeMode ||
-      (maybeMode !== 'raw' && maybeMode !== 'avg' && maybeMode !== 'both') ||
-      (selectedView !== '7d' && selectedView !== '30d' && selectedView !== 'all')
-    ) {
-      if (!interaction.replied) {
-        await interaction
-          .reply({ content: 'Unbekannte Aktion.', flags: MessageFlags.Ephemeral })
-          .catch(() => {});
-      }
-      return;
-    }
-    itemId = maybeItemId;
-    state = { view: selectedView, mode: maybeMode };
-  } else if (interaction.isButton()) {
-    const [, action, maybeItemId, maybeView, maybeMode] = interaction.customId.split(':');
-    if (
-      action !== 'mode' ||
-      !maybeItemId ||
-      !maybeView ||
-      !maybeMode ||
-      (maybeView !== '7d' && maybeView !== '30d' && maybeView !== 'all') ||
-      (maybeMode !== 'raw' && maybeMode !== 'avg' && maybeMode !== 'both')
-    ) {
-      if (!interaction.replied) {
-        await interaction
-          .reply({ content: 'Unbekannte Aktion.', flags: MessageFlags.Ephemeral })
-          .catch(() => {});
-      }
-      return;
-    }
-    itemId = maybeItemId;
-    state = { view: maybeView, mode: maybeMode };
-  } else {
+  const term = String(focused.value ?? '').trim();
+  if (!term) {
+    await interaction.respond([]).catch(() => {});
+    return;
+  }
+
+  try {
+    const matches = await searchItems(term, 20);
+    const uniqueValues = new Set<string>();
+    const options = matches
+      .map(match => {
+        const optionValue = match.id;
+        if (uniqueValues.has(optionValue)) {
+          return null;
+        }
+        uniqueValues.add(optionValue);
+        const label = match.name.trim() || match.id;
+        return {
+          name: label,
+          value: optionValue,
+        };
+      })
+      .filter((value): value is { name: string; value: string } => Boolean(value))
+      .slice(0, 20);
+
+    await interaction.respond(options);
+  } catch (err) {
+    console.error(`[autocomplete:${COMMAND_ID}]`, err);
+    await interaction.respond([]).catch(() => {});
+  }
+};
+
+export const handleComponent = async (interaction: MessageComponentInteraction) => {
+  if (!interaction.isStringSelectMenu()) {
     if (!interaction.replied) {
       await interaction
         .reply({ content: 'Dieser Interaktionstyp wird nicht unterstützt.', flags: MessageFlags.Ephemeral })
@@ -832,7 +813,15 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
     return;
   }
 
-  if (!itemId || !state) {
+  const [command, action, maybeItemId] = interaction.customId.split(':');
+  const selectedView = interaction.values[0];
+
+  if (
+    command !== COMMAND_ID ||
+    action !== 'view' ||
+    !maybeItemId ||
+    (selectedView !== '7d' && selectedView !== '30d' && selectedView !== 'all')
+  ) {
     if (!interaction.replied) {
       await interaction
         .reply({ content: 'Unbekannte Aktion.', flags: MessageFlags.Ephemeral })
@@ -840,6 +829,9 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
     }
     return;
   }
+
+  const itemId = maybeItemId;
+  const state: { view: ViewMode } = { view: selectedView };
 
   try {
     const item = await fetchItemById(itemId);
@@ -888,5 +880,5 @@ export const handleComponent = async (interaction: MessageComponentInteraction) 
   }
 };
 
-export default { data: data.toJSON(), execute, handleComponent } satisfies CommandDef;
+export default { data: data.toJSON(), execute, handleComponent, handleAutocomplete } satisfies CommandDef;
 
