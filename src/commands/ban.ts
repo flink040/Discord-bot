@@ -6,6 +6,9 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
+import { createModerationCase } from '../moderation/case-manager';
+import { fetchModerationConfig } from '../moderation/config';
+import { logModerationCase } from '../moderation/logging';
 import { sendModerationMessage } from '../utils/moderation';
 
 function assertGuildMember(member: GuildMember | null): asserts member is GuildMember {
@@ -82,6 +85,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   }
 
   const guild = interaction.guild;
+  const config = await fetchModerationConfig(guild.id);
   const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
   assertGuildMember(targetMember);
 
@@ -96,7 +100,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const auditReason = `${reason} — Ausgeführt von ${interaction.user.tag}`.slice(0, 512);
 
   try {
-    await targetMember.ban({ deleteMessageDays: 0, reason: auditReason });
+    await targetMember.ban({ deleteMessageSeconds: 0, reason: auditReason });
   } catch (error) {
     console.error('[ban] Fehler beim Bann:', error);
     await interaction.reply({
@@ -106,6 +110,18 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     return;
   }
 
+  if (config.notifications.dmOnAction) {
+    const dmLines = [
+      `Du wurdest von **${guild.name}** gebannt.`,
+      `Moderator: ${interaction.user.tag}`,
+      `Grund: ${reason}`,
+    ];
+
+    await targetUser
+      .send({ content: dmLines.join('\n') })
+      .catch(() => {});
+  }
+
   const confirmation = `✅ ${targetMember.user.tag} wurde gebannt.`;
   await interaction.reply({
     content: confirmation,
@@ -113,7 +129,29 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   });
 
   const logMessage = `${interaction.user.toString()} hat <@${targetMember.id}> gebannt wegen ${reason}.`;
-  await sendModerationMessage(interaction.guild, logMessage, { logTag: 'ban' });
+  await sendModerationMessage(interaction.guild, logMessage, {
+    logTag: 'ban',
+    category: 'bans',
+  });
+
+  try {
+    const { caseRecord } = await createModerationCase({
+      guildId: guild.id,
+      type: 'ban',
+      targetId: targetUser.id,
+      targetTag: targetUser.tag,
+      moderatorId: interaction.user.id,
+      moderatorTag: interaction.user.tag,
+      reason,
+      metadata: {
+        command: 'ban',
+      },
+    });
+
+    await logModerationCase(guild, caseRecord);
+  } catch (error) {
+    console.error('[ban] Failed to persist moderation case:', error);
+  }
 };
 
 export default { data: data.toJSON(), execute } satisfies CommandDef;

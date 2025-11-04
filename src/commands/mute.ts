@@ -6,6 +6,9 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
+import { createModerationCase } from '../moderation/case-manager';
+import { fetchModerationConfig } from '../moderation/config';
+import { logModerationCase } from '../moderation/logging';
 import { sendModerationMessage } from '../utils/moderation';
 import { formatDuration } from '../utils/time';
 
@@ -94,7 +97,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   }
 
   const guild = interaction.guild;
-
+  const config = await fetchModerationConfig(guild.id);
   const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
   assertGuildMember(targetMember);
 
@@ -140,16 +143,18 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const muteEndsAt = Date.now() + durationMs;
   const muteEndSeconds = Math.floor(muteEndsAt / 1000);
   const formattedDuration = formatDuration(durationMs) || `${minutes} Minute${minutes === 1 ? '' : 'n'}`;
-  const dmLines = [
-    `Du Frechdachs hast auf **${guild.name}** Mist gemacht und bist jetzt stummgeschaltet.`,
-    `Moderation durch: ${interaction.user.tag}`,
-    `Dauer: ${formattedDuration} (endet ${`<t:${muteEndSeconds}:R>`}, ${`<t:${muteEndSeconds}:f>`}).`,
-    `Grund: ${reason}`,
-  ];
+  if (config.notifications.dmOnAction) {
+    const dmLines = [
+      `Du Frechdachs hast auf **${guild.name}** Mist gemacht und bist jetzt stummgeschaltet.`,
+      `Moderation durch: ${interaction.user.tag}`,
+      `Dauer: ${formattedDuration} (endet ${`<t:${muteEndSeconds}:R>`}, ${`<t:${muteEndSeconds}:f>`}).`,
+      `Grund: ${reason}`,
+    ];
 
-  await targetUser
-    .send({ content: dmLines.join('\n') })
-    .catch(() => {});
+    await targetUser
+      .send({ content: dmLines.join('\n') })
+      .catch(() => {});
+  }
 
   const responseMessage =
     `<@${interaction.user.id}> hat <@${targetMember.id}> für ${minutes} Minuten gemutet für ${safeReason}.`;
@@ -161,7 +166,30 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
   const logMessage =
     `${interaction.user.toString()} hat <@${targetMember.id}> für ${minutes} Minuten ` +
     `gemutet für ${safeReason}.`;
-  await sendModerationMessage(interaction.guild, logMessage, { logTag: 'mute' });
+  await sendModerationMessage(interaction.guild, logMessage, {
+    logTag: 'mute',
+    category: 'moderation',
+  });
+
+  try {
+    const { caseRecord } = await createModerationCase({
+      guildId: guild.id,
+      type: 'timeout',
+      targetId: targetUser.id,
+      targetTag: targetUser.tag,
+      moderatorId: interaction.user.id,
+      moderatorTag: interaction.user.tag,
+      reason,
+      durationMs: durationMs,
+      metadata: {
+        command: 'mute',
+      },
+    });
+
+    await logModerationCase(guild, caseRecord);
+  } catch (error) {
+    console.error('[mute] Failed to persist moderation case:', error);
+  }
 };
 
 export default { data: data.toJSON(), execute } satisfies CommandDef;
