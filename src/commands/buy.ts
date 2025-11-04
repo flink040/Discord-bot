@@ -36,16 +36,6 @@ const data = new SlashCommandBuilder()
       .setName('price')
       .setDescription('Angebotener Preis in Smaragden (optional).')
       .setMinValue(0),
-  )
-  .addStringOption(option =>
-    option
-      .setName('price_type')
-      .setDescription('Preistyp (optional).')
-      .addChoices(
-        { name: 'VHB', value: 'negotiable' },
-        { name: 'Höchstgebot', value: 'highest_bid' },
-        { name: 'Direktverkauf', value: 'direct_sale' },
-      ),
   );
 
 type UserRow = {
@@ -208,8 +198,6 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
   const quantity = interaction.options.getInteger('quantity');
   const price = interaction.options.getInteger('price');
-  const priceTypeRaw = interaction.options.getString('price_type');
-  const priceType = isPriceType(priceTypeRaw) ? priceTypeRaw : null;
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -231,7 +219,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
     const payload = {
       quantity: quantity ?? null,
       price: price ?? null,
-      price_type: priceType,
+      price_type: null,
       price_min: null,
       price_max: null,
       is_active: true,
