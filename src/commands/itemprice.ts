@@ -70,11 +70,12 @@ export const data = new SlashCommandBuilder()
 
 async function findItemByName(name: string): Promise<ItemRow | null> {
   const supabase = getSupabaseClient();
+  const escapedName = escapeLikePattern(name);
   const { data: row, error } = await supabase
     .from('items')
     .select('id, name')
     .eq('status', 'approved')
-    .ilike('name', `%${name}%`)
+    .ilike('name', `%${escapedName}%`)
     .order('name', { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -718,10 +719,10 @@ async function loadPriceDataset(itemId: string): Promise<PriceDataset> {
 export const execute = async (interaction: ChatInputCommandInteraction) => {
   await interaction.deferReply();
 
-  const name = interaction.options.getString('name', true);
+  const name = interaction.options.getString('name', true).trim();
 
   try {
-    const item = await findItemByName(name);
+    const item = isUuid(name) ? await fetchItemById(name) : await findItemByName(name);
     if (!item) {
       await interaction.editReply('Kein freigegebenes Item mit diesem Namen gefunden.');
       return;
