@@ -7,6 +7,13 @@ import {
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
+const PRICE_TYPES = ['negotiable', 'highest_bid', 'direct_sale'] as const;
+type PriceType = (typeof PRICE_TYPES)[number];
+
+function isPriceType(value: string | null): value is PriceType {
+  return value !== null && PRICE_TYPES.includes(value as PriceType);
+}
+
 const data = new SlashCommandBuilder()
   .setName('buy')
   .setDescription('Fügt ein Item zu deinen Marktplatz-Gesuchen hinzu.')
