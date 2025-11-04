@@ -1,41 +1,48 @@
 import type { Guild } from 'discord.js';
-import { createGuildChannelSetting } from './channel-setting';
+import { fetchModerationConfig, updateModerationConfig } from '../moderation/config';
+import { sendModerationLog } from '../moderation/logging';
+import type { ModerationLogCategory } from '../moderation/types';
 
-const adapter = createGuildChannelSetting({
-  configFileName: 'moderation-channels.json',
-  supabaseColumn: 'moderation_channel_id',
-  envVarName: 'MODERATION_CHANNEL_STORAGE',
-  logTag: 'moderation',
-});
+export async function getModerationChannelId(guildId: string): Promise<string | null> {
+  const config = await fetchModerationConfig(guildId);
+  return config.logChannels.moderation ?? null;
+}
 
-export const getModerationChannelId = adapter.getChannelId;
-export const setModerationChannelId = adapter.setChannelId;
+export async function setModerationChannelId(
+  guildId: string,
+  channelId: string | null,
+  guildName?: string | null,
+): Promise<boolean> {
+  try {
+    await updateModerationConfig(guildId, {
+      logChannels: {
+        moderation: channelId,
+      },
+    });
 
-type SendModerationMessageOptions = {
-  logTag?: string;
-};
+    if (guildName) {
+      console.debug(
+        `[moderation] Moderationschannel für ${guildName} (${guildId}) wurde auf ${channelId ?? 'entfernt'} gesetzt.`,
+      );
+    }
+
+    return true;
+  } catch (error) {
+    console.error('[moderation] Failed to persist moderation channel:', error);
+    return false;
+  }
+}
 
 export async function sendModerationMessage(
   guild: Guild,
   message: string,
-  { logTag = 'moderation' }: SendModerationMessageOptions = {},
+  options: { logTag?: string; category?: ModerationLogCategory } = {},
 ): Promise<boolean> {
-  const channelId = (await getModerationChannelId(guild.id)) ?? process.env.MODERATION_CHANNEL_ID;
-  if (!channelId) {
-    return false;
-  }
-
-  const channel = await guild.channels.fetch(channelId).catch(() => null);
-  if (!channel || !channel.isTextBased()) {
-    console.warn(`[${logTag}] Konfigurierter Moderationschannel nicht gefunden oder nicht textbasiert.`);
-    return false;
-  }
-
-  try {
-    await channel.send({ content: message });
-    return true;
-  } catch (err) {
-    console.error(`[${logTag}] Fehler beim Senden der Moderationsnachricht:`, err);
-    return false;
-  }
+  const { logTag = 'moderation', category = 'moderation' } = options;
+  return await sendModerationLog(
+    guild,
+    category,
+    { content: message },
+    { logTag },
+  );
 }
