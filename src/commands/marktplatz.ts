@@ -29,11 +29,23 @@ type IntentType = 'buy' | 'sell';
 
 type ItemRelation<T> = T | T[] | null;
 
+type PriceType = 'negotiable' | 'highest_bid' | 'direct_sale';
+
+const PRICE_TYPE_LABELS: Record<PriceType, string> = {
+  negotiable: 'VHB',
+  highest_bid: 'Höchstgebot',
+  direct_sale: 'Direktverkauf',
+};
+
+const PRICE_FORMATTER = new Intl.NumberFormat('de-DE');
+
 type TradeIntentRow = {
   id: string;
   item_id: string | number | null;
   intent_type: IntentType;
   quantity: number | string | null;
+  price: number | string | null;
+  price_type: PriceType | null;
   price_min: number | string | null;
   price_max: number | string | null;
   contact_method: string | null;
@@ -82,7 +94,7 @@ function normalizeNumber(value: number | string | null): number | null {
   return numeric;
 }
 
-function formatPrice(minRaw: number | string | null, maxRaw: number | string | null): string | null {
+function formatPriceRange(minRaw: number | string | null, maxRaw: number | string | null): string | null {
   const min = normalizeNumber(minRaw);
   const max = normalizeNumber(maxRaw);
 
@@ -90,26 +102,49 @@ function formatPrice(minRaw: number | string | null, maxRaw: number | string | n
     return null;
   }
 
-  const formatter = new Intl.NumberFormat('de-DE');
-
   if (min !== null && max !== null) {
     if (Math.abs(min - max) < Number.EPSILON) {
-      return `${formatter.format(min)} Smaragde`;
+      return `${PRICE_FORMATTER.format(min)} Smaragde`;
     }
     const lower = Math.min(min, max);
     const upper = Math.max(min, max);
-    return `${formatter.format(lower)} – ${formatter.format(upper)} Smaragde`;
+    return `${PRICE_FORMATTER.format(lower)} – ${PRICE_FORMATTER.format(upper)} Smaragde`;
   }
 
   if (min !== null) {
-    return `ab ${formatter.format(min)} Smaragde`;
+    return `ab ${PRICE_FORMATTER.format(min)} Smaragde`;
   }
 
   if (max !== null) {
-    return `bis ${formatter.format(max)} Smaragde`;
+    return `bis ${PRICE_FORMATTER.format(max)} Smaragde`;
   }
 
   return null;
+}
+
+function formatIntentPrice(row: TradeIntentRow): string | null {
+  const price = normalizeNumber(row.price);
+  const priceType = row.price_type;
+
+  if (price !== null) {
+    const formattedAmount = `${PRICE_FORMATTER.format(price)} Smaragde`;
+
+    switch (priceType) {
+      case 'negotiable':
+        return `${formattedAmount} (VHB)`;
+      case 'highest_bid':
+      case 'direct_sale':
+        return `${PRICE_TYPE_LABELS[priceType]}: ${formattedAmount}`;
+      default:
+        return formattedAmount;
+    }
+  }
+
+  if (priceType) {
+    return PRICE_TYPE_LABELS[priceType];
+  }
+
+  return formatPriceRange(row.price_min, row.price_max);
 }
 
 function formatQuantity(quantityRaw: number | string | null): string | null {
@@ -158,7 +193,7 @@ function formatIntentRow(row: TradeIntentRow): string | null {
   const headerSuffix = quantityText ? ` · ${quantityText}` : '';
   lines.push(`• **[${escapedName}](${link})**${headerSuffix}`);
 
-  const priceText = formatPrice(row.price_min, row.price_max);
+  const priceText = formatIntentPrice(row);
   if (priceText) {
     lines.push(`  💰 ${priceText}`);
   }
@@ -274,6 +309,8 @@ async function fetchTradeIntents(
        item_id,
        intent_type,
        quantity,
+       price,
+       price_type,
        price_min,
        price_max,
        contact_method,

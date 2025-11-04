@@ -7,6 +7,13 @@ import {
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
+const PRICE_TYPES = ['negotiable', 'highest_bid', 'direct_sale'] as const;
+type PriceType = (typeof PRICE_TYPES)[number];
+
+function isPriceType(value: string | null): value is PriceType {
+  return value !== null && PRICE_TYPES.includes(value as PriceType);
+}
+
 const data = new SlashCommandBuilder()
   .setName('buy')
   .setDescription('Fügt ein Item zu deinen Marktplatz-Gesuchen hinzu.')
@@ -26,15 +33,19 @@ const data = new SlashCommandBuilder()
   )
   .addIntegerOption(option =>
     option
-      .setName('price_min')
-      .setDescription('Minimaler Preis in Smaragden (optional).')
+      .setName('price')
+      .setDescription('Angebotener Preis in Smaragden (optional).')
       .setMinValue(0),
   )
-  .addIntegerOption(option =>
+  .addStringOption(option =>
     option
-      .setName('price_max')
-      .setDescription('Maximaler Preis in Smaragden (optional).')
-      .setMinValue(0),
+      .setName('price_type')
+      .setDescription('Preistyp (optional).')
+      .addChoices(
+        { name: 'VHB', value: 'negotiable' },
+        { name: 'Höchstgebot', value: 'highest_bid' },
+        { name: 'Direktverkauf', value: 'direct_sale' },
+      ),
   );
 
 type UserRow = {
@@ -196,15 +207,9 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 
   const quantity = interaction.options.getInteger('quantity');
-  const priceMin = interaction.options.getInteger('price_min');
-  const priceMax = interaction.options.getInteger('price_max');
-  if (priceMin !== null && priceMax !== null && priceMin > priceMax) {
-    await interaction.reply({
-      content: '❌ Der minimale Preis darf nicht höher als der maximale Preis sein.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
+  const price = interaction.options.getInteger('price');
+  const priceTypeRaw = interaction.options.getString('price_type');
+  const priceType = isPriceType(priceTypeRaw) ? priceTypeRaw : null;
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -225,8 +230,10 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
     const payload = {
       quantity: quantity ?? null,
-      price_min: priceMin ?? null,
-      price_max: priceMax ?? null,
+      price: price ?? null,
+      price_type: priceType,
+      price_min: null,
+      price_max: null,
       is_active: true,
     } as const;
 
