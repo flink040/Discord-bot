@@ -26,14 +26,8 @@ const data = new SlashCommandBuilder()
   )
   .addIntegerOption(option =>
     option
-      .setName('price_min')
-      .setDescription('Minimaler Preis in Smaragden (optional).')
-      .setMinValue(0),
-  )
-  .addIntegerOption(option =>
-    option
-      .setName('price_max')
-      .setDescription('Maximaler Preis in Smaragden (optional).')
+      .setName('price')
+      .setDescription('Angebotener Preis in Smaragden (optional).')
       .setMinValue(0),
   );
 
@@ -196,15 +190,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   }
 
   const quantity = interaction.options.getInteger('quantity');
-  const priceMin = interaction.options.getInteger('price_min');
-  const priceMax = interaction.options.getInteger('price_max');
-  if (priceMin !== null && priceMax !== null && priceMin > priceMax) {
-    await interaction.reply({
-      content: '❌ Der minimale Preis darf nicht höher als der maximale Preis sein.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
+  const price = interaction.options.getInteger('price');
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -225,8 +211,10 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
 
     const payload = {
       quantity: quantity ?? null,
-      price_min: priceMin ?? null,
-      price_max: priceMax ?? null,
+      price: price ?? null,
+      price_type: null,
+      price_min: null,
+      price_max: null,
       is_active: true,
     } as const;
 

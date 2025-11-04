@@ -7,6 +7,13 @@ import {
 import type { CommandDef } from '../types/Command';
 import { getSupabaseClient } from '../supabase';
 
+const PRICE_TYPES = ['negotiable', 'highest_bid', 'direct_sale'] as const;
+type PriceType = (typeof PRICE_TYPES)[number];
+
+function isPriceType(value: string | null): value is PriceType {
+  return value !== null && PRICE_TYPES.includes(value as PriceType);
+}
+
 const data = new SlashCommandBuilder()
   .setName('sell')
   .setDescription('Fügt ein Item zu deinen Marktplatz-Angeboten hinzu.')
@@ -35,6 +42,16 @@ const data = new SlashCommandBuilder()
       .setName('price_max')
       .setDescription('Maximaler Preis in Smaragden (optional).')
       .setMinValue(0),
+  )
+  .addStringOption(option =>
+    option
+      .setName('price_type')
+      .setDescription('Preistyp (optional).')
+      .addChoices(
+        { name: 'VHB', value: 'negotiable' },
+        { name: 'Höchstgebot', value: 'highest_bid' },
+        { name: 'Direktverkauf', value: 'direct_sale' },
+      ),
   );
 
 type UserRow = {
@@ -198,6 +215,8 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
   const quantity = interaction.options.getInteger('quantity');
   const priceMin = interaction.options.getInteger('price_min');
   const priceMax = interaction.options.getInteger('price_max');
+  const priceTypeRaw = interaction.options.getString('price_type');
+  const priceType = isPriceType(priceTypeRaw) ? priceTypeRaw : null;
   if (priceMin !== null && priceMax !== null && priceMin > priceMax) {
     await interaction.reply({
       content: '❌ Der minimale Preis darf nicht höher als der maximale Preis sein.',
@@ -227,6 +246,7 @@ export const execute = async (interaction: ChatInputCommandInteraction) => {
       quantity: quantity ?? null,
       price_min: priceMin ?? null,
       price_max: priceMax ?? null,
+      price_type: priceType,
       is_active: true,
     } as const;
 
