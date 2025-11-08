@@ -34,7 +34,7 @@ const data = new SlashCommandBuilder()
   .addIntegerOption(option =>
     option
       .setName('price')
-      .setDescription('Angebotener Preis in Smaragden (optional).')
+      .setDescription('Angebotener Preis in $ (optional).')
       .setMinValue(0),
   );
 

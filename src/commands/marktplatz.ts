@@ -97,7 +97,7 @@ function formatIntentPrice(row: TradeIntentRow): string | null {
   const priceType = row.price_type;
 
   if (price !== null) {
-    const formattedAmount = `${PRICE_FORMATTER.format(price)} Smaragde`;
+    const formattedAmount = `${PRICE_FORMATTER.format(price)} $`;
 
     switch (priceType) {
       case 'negotiable':
