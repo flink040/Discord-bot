@@ -44,8 +44,8 @@ type TradeIntentRow = {
   item_id: string | number | null;
   intent_type: IntentType;
   quantity: number | string | null;
-  price: number | string | null;
-  price_type: PriceType | null;
+  price?: number | string | null;
+  price_type?: PriceType | null;
   price_min: number | string | null;
   price_max: number | string | null;
   contact_method: string | null;
@@ -87,14 +87,17 @@ function ensureGuildInteraction(
   return interaction;
 }
 
-function normalizeNumber(value: number | string | null): number | null {
+function normalizeNumber(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const numeric = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(numeric)) return null;
   return numeric;
 }
 
-function formatPriceRange(minRaw: number | string | null, maxRaw: number | string | null): string | null {
+function formatPriceRange(
+  minRaw: number | string | null | undefined,
+  maxRaw: number | string | null | undefined,
+): string | null {
   const min = normalizeNumber(minRaw);
   const max = normalizeNumber(maxRaw);
 
@@ -302,39 +305,83 @@ async function fetchTradeIntents(
   filter: IntentType[] | null,
 ): Promise<TradeIntentRow[]> {
   const supabase = getSupabaseClient();
-  let query = supabase
-    .from('item_trade_intents')
-    .select(
-      `id,
-       item_id,
-       intent_type,
-       quantity,
-       price,
-       price_type,
-       price_min,
-       price_max,
-       contact_method,
-       notes,
-       updated_at,
-       created_at,
-       items(name)`
-    )
-    .eq('user_id', userId)
-    .eq('is_active', true)
-    .order('updated_at', { ascending: false });
+  const selectWithPrice =
+    `id,
+     item_id,
+     intent_type,
+     quantity,
+     price,
+     price_type,
+     price_min,
+     price_max,
+     contact_method,
+     notes,
+     updated_at,
+     created_at,
+     items(name)`;
 
-  if (filter && filter.length === 1) {
-    query = query.eq('intent_type', filter[0]);
-  } else if (filter && filter.length > 1) {
-    query = query.in('intent_type', filter);
+  const legacySelect =
+    `id,
+     item_id,
+     intent_type,
+     quantity,
+     price_min,
+     price_max,
+     contact_method,
+     notes,
+     updated_at,
+     created_at,
+     items(name)`;
+
+  const createQuery = (select: string) => {
+    let query = supabase
+      .from('item_trade_intents')
+      .select(select)
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('updated_at', { ascending: false });
+
+    if (filter && filter.length === 1) {
+      query = query.eq('intent_type', filter[0]);
+    } else if (filter && filter.length > 1) {
+      query = query.in('intent_type', filter);
+    }
+
+    return query;
+  };
+
+  const runQuery = async (select: string): Promise<TradeIntentRow[]> => {
+    const { data, error } = (await createQuery(select)) as unknown as {
+      data: TradeIntentRow[] | null;
+      error: { code?: string; message?: string } | null;
+    };
+    if (error) {
+      throw error;
+    }
+    return data ?? [];
+  };
+
+  try {
+    return await runQuery(selectWithPrice);
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: string }).code ?? '')
+      : '';
+    const message = typeof error === 'object' && error !== null && 'message' in error
+      ? String((error as { message?: string }).message ?? '')
+      : '';
+
+    const isMissingPriceColumns =
+      code === '42703' ||
+      code === 'PGRST116' ||
+      message.toLowerCase().includes('column') && message.toLowerCase().includes('price');
+
+    if (!isMissingPriceColumns) {
+      throw error;
+    }
+
+    return await runQuery(legacySelect);
   }
-
-  const { data, error } = await query;
-  if (error) {
-    throw error;
-  }
-
-  return (data as TradeIntentRow[]) ?? [];
 }
 
 function buildEmbed(
