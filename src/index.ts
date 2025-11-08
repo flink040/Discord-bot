@@ -20,6 +20,7 @@ import { getBlocklistRules } from './utils/blocklist';
 import { getCachedAutomodState } from './utils/guild-feature-settings';
 import { sendModerationMessage } from './utils/moderation';
 import { formatDuration } from './utils/time';
+import { getGuildInitializationState } from './utils/initialization';
 
 const token = process.env.DISCORD_TOKEN;
 const appId = process.env.DISCORD_APP_ID;
@@ -113,7 +114,8 @@ const server = startHttpServer(port);
 
 // Load commands
 const commands = loadCommands();
-const commandsWithoutVerification = new Set<string>(['verify', 'init']);
+const commandsBypassVerification = new Set<string>(['verify', 'init']);
+const commandsAllowedWithoutInitialization = new Set<string>(['init']);
 console.log(`[commands] Loaded: ${Array.from(commands.keys()).join(', ') || '(none)'}`);
 
 function sanitizeForLog(input: string): string {
@@ -233,7 +235,8 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
     }
 
     if (interaction.isChatInputCommand()) {
-      const cmd = commands.get(interaction.commandName);
+      const commandName = interaction.commandName;
+      const cmd = commands.get(commandName);
       if (!cmd) {
         await interaction
           .reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral })
@@ -241,17 +244,38 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
         return;
       }
 
-      if (!commandsWithoutVerification.has(interaction.commandName)) {
-        if (!interaction.inGuild() || !interaction.guild) {
+      const requiresInitialization = !commandsAllowedWithoutInitialization.has(commandName);
+      const requiresVerification = !commandsBypassVerification.has(commandName);
+
+      if ((requiresInitialization || requiresVerification) && (!interaction.inGuild() || !interaction.guild)) {
+        await interaction
+          .reply({
+            content: '❌ Dieser Befehl kann nur innerhalb eines Servers verwendet werden.',
+            flags: MessageFlags.Ephemeral,
+          })
+          .catch(() => {});
+        return;
+      }
+
+      if (requiresInitialization && interaction.guild) {
+        const { initialized, missing } = await getGuildInitializationState(interaction.guild);
+        if (!initialized) {
+          const missingDetails = missing.length > 0
+            ? `\n\nFehlende Schritte:\n${missing.map(item => `• ${item}`).join('\n')}`
+            : '';
           await interaction
             .reply({
-              content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Führe den Befehl auf dem Server aus und nutze `/verify` zur Verifizierung.',
+              content:
+                '❌ Der Bot wurde auf diesem Server noch nicht initialisiert. Bitte führe zuerst `/init` als Server-Inhaberin/Server-Inhaber oder mit Administrator-Rechten aus.' +
+                missingDetails,
               flags: MessageFlags.Ephemeral,
             })
             .catch(() => {});
           return;
         }
+      }
 
+      if (requiresVerification && interaction.guild) {
         const verified = await isUserVerified(interaction.guild, interaction.user.id);
         if (!verified) {
           await interaction

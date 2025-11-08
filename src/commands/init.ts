@@ -24,6 +24,7 @@ import {
   setMarketplacePostIntervalHours,
 } from '../utils/marketplace';
 import { findVerifiedRole, VERIFIED_ROLE_NAME } from '../utils/verification';
+import { invalidateGuildInitializationCache } from '../utils/initialization';
 
 const MODERATION_CHANNEL_NAME = 'moderation-log';
 const MARKETPLACE_CHANNEL_NAME = 'marktplatz';
@@ -82,12 +83,16 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+  let guildIdForInvalidation: string | null = null;
+
   try {
     const guild = interaction.guild;
     if (!guild) {
       await interaction.editReply('❌ Der Server konnte nicht geladen werden. Bitte versuche es erneut.');
       return;
     }
+
+    guildIdForInvalidation = guild.id;
 
     const me = guild.members.me ?? (await guild.members.fetch(interaction.client.user.id));
     const requestedMarketplaceInterval = interaction.options.getInteger('marktplatz_intervall');
@@ -668,6 +673,10 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
           flags: MessageFlags.Ephemeral,
         })
         .catch(() => {});
+    }
+  } finally {
+    if (guildIdForInvalidation) {
+      invalidateGuildInitializationCache(guildIdForInvalidation);
     }
   }
 };

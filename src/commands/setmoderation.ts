@@ -7,6 +7,7 @@ import {
 } from 'discord.js';
 import type { CommandDef } from '../types/Command';
 import { setModerationChannelId } from '../utils/moderation';
+import { invalidateGuildInitializationCache } from '../utils/initialization';
 
 const data = new SlashCommandBuilder()
   .setName('setmoderation')
@@ -75,6 +76,8 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     });
     return;
   }
+
+  invalidateGuildInitializationCache(interaction.guildId);
 
   await interaction.reply({
     content: `✅ Moderationsmeldungen werden nun in ${channel} gesendet.`,
