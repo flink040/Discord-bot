@@ -7,6 +7,9 @@ import {
   Interaction,
   MessageFlags,
   PermissionFlagsBits,
+  type Guild,
+  type GuildBasedChannel,
+  type GuildTextBasedChannel,
 } from 'discord.js';
 import { startHttpServer } from './http';
 import { loadCommands } from './commands/_loader';
@@ -17,6 +20,7 @@ import { getBlocklistRules } from './utils/blocklist';
 import { getCachedAutomodState } from './utils/guild-feature-settings';
 import { sendModerationMessage } from './utils/moderation';
 import { formatDuration } from './utils/time';
+import { getGuildInitializationState } from './utils/initialization';
 
 const token = process.env.DISCORD_TOKEN;
 const appId = process.env.DISCORD_APP_ID;
@@ -110,7 +114,8 @@ const server = startHttpServer(port);
 
 // Load commands
 const commands = loadCommands();
-const commandsWithoutVerification = new Set<string>(['verify', 'init']);
+const commandsBypassVerification = new Set<string>(['verify', 'init']);
+const commandsAllowedWithoutInitialization = new Set<string>(['init']);
 console.log(`[commands] Loaded: ${Array.from(commands.keys()).join(', ') || '(none)'}`);
 
 function sanitizeForLog(input: string): string {
@@ -131,6 +136,54 @@ function formatQuoted(text: string): string {
 type ClientAttachmentOptions = {
   hasMessageContent: boolean;
 };
+
+function isTextSendableChannel(channel: GuildBasedChannel): channel is GuildTextBasedChannel {
+  return channel.isTextBased() && 'send' in channel;
+}
+
+async function sendInitReminder(guild: Guild) {
+  const reminder = [
+    '👋 Hallo! Danke, dass du den antiselbstjustiz Bot hinzugefügt hast.',
+    'Bitte führe zuerst `/init` aus, damit der Bot korrekt eingerichtet werden kann.',
+    'Dieser Schritt muss von der Server-Inhaberin/dem Server-Inhaber oder einer Rolle mit Administrator-Rechten durchgeführt werden.',
+  ].join('\n');
+
+  const me = guild.members.me;
+
+  const owner = await guild.fetchOwner().catch(() => null);
+  if (owner) {
+    const dmSent = await owner.send({ content: reminder }).then(() => true).catch(() => false);
+    if (dmSent) {
+      return;
+    }
+  }
+
+  const attemptSend = async (channel: GuildTextBasedChannel) => {
+    const permissions = me ? channel.permissionsFor(me) : null;
+    if (!permissions?.has(PermissionFlagsBits.ViewChannel) || !permissions.has(PermissionFlagsBits.SendMessages)) {
+      return false;
+    }
+    return channel.send({ content: reminder }).then(() => true).catch(() => false);
+  };
+
+  const systemChannel = guild.systemChannel;
+  if (systemChannel && isTextSendableChannel(systemChannel)) {
+    const sent = await attemptSend(systemChannel);
+    if (sent) {
+      return;
+    }
+  }
+
+  for (const channel of guild.channels.cache.values()) {
+    if (!isTextSendableChannel(channel)) {
+      continue;
+    }
+    const sent = await attemptSend(channel);
+    if (sent) {
+      return;
+    }
+  }
+}
 
 function attachClientEventHandlers(client: Client, { hasMessageContent }: ClientAttachmentOptions) {
   client.once(Events.ClientReady, async (c) => {
@@ -157,6 +210,7 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
     }
 
     await syncGuildSettingsForGuild(guild);
+    await sendInitReminder(guild);
   });
 
   client.on(Events.GuildUpdate, async (_oldGuild, newGuild) => {
@@ -181,7 +235,8 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
     }
 
     if (interaction.isChatInputCommand()) {
-      const cmd = commands.get(interaction.commandName);
+      const commandName = interaction.commandName;
+      const cmd = commands.get(commandName);
       if (!cmd) {
         await interaction
           .reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral })
@@ -189,17 +244,38 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
         return;
       }
 
-      if (!commandsWithoutVerification.has(interaction.commandName)) {
-        if (!interaction.inGuild() || !interaction.guild) {
+      const requiresInitialization = !commandsAllowedWithoutInitialization.has(commandName);
+      const requiresVerification = !commandsBypassVerification.has(commandName);
+
+      if ((requiresInitialization || requiresVerification) && (!interaction.inGuild() || !interaction.guild)) {
+        await interaction
+          .reply({
+            content: '❌ Dieser Befehl kann nur innerhalb eines Servers verwendet werden.',
+            flags: MessageFlags.Ephemeral,
+          })
+          .catch(() => {});
+        return;
+      }
+
+      if (requiresInitialization && interaction.guild) {
+        const { initialized, missing } = await getGuildInitializationState(interaction.guild);
+        if (!initialized) {
+          const missingDetails = missing.length > 0
+            ? `\n\nFehlende Schritte:\n${missing.map(item => `• ${item}`).join('\n')}`
+            : '';
           await interaction
             .reply({
-              content: '❌ Du musst verifiziert sein, um diesen Befehl zu verwenden. Führe den Befehl auf dem Server aus und nutze `/verify` zur Verifizierung.',
+              content:
+                '❌ Der Bot wurde auf diesem Server noch nicht initialisiert. Bitte führe zuerst `/init` als Server-Inhaberin/Server-Inhaber oder mit Administrator-Rechten aus.' +
+                missingDetails,
               flags: MessageFlags.Ephemeral,
             })
             .catch(() => {});
           return;
         }
+      }
 
+      if (requiresVerification && interaction.guild) {
         const verified = await isUserVerified(interaction.guild, interaction.user.id);
         if (!verified) {
           await interaction
