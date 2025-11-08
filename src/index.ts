@@ -7,6 +7,9 @@ import {
   Interaction,
   MessageFlags,
   PermissionFlagsBits,
+  type Guild,
+  type GuildBasedChannel,
+  type GuildTextBasedChannel,
 } from 'discord.js';
 import { startHttpServer } from './http';
 import { loadCommands } from './commands/_loader';
@@ -132,6 +135,54 @@ type ClientAttachmentOptions = {
   hasMessageContent: boolean;
 };
 
+function isTextSendableChannel(channel: GuildBasedChannel): channel is GuildTextBasedChannel {
+  return channel.isTextBased() && 'send' in channel;
+}
+
+async function sendInitReminder(guild: Guild) {
+  const reminder = [
+    '👋 Hallo! Danke, dass du den antiselbstjustiz Bot hinzugefügt hast.',
+    'Bitte führe zuerst `/init` aus, damit der Bot korrekt eingerichtet werden kann.',
+    'Dieser Schritt muss von der Server-Inhaberin/dem Server-Inhaber oder einer Rolle mit Administrator-Rechten durchgeführt werden.',
+  ].join('\n');
+
+  const me = guild.members.me;
+
+  const owner = await guild.fetchOwner().catch(() => null);
+  if (owner) {
+    const dmSent = await owner.send({ content: reminder }).then(() => true).catch(() => false);
+    if (dmSent) {
+      return;
+    }
+  }
+
+  const attemptSend = async (channel: GuildTextBasedChannel) => {
+    const permissions = me ? channel.permissionsFor(me) : null;
+    if (!permissions?.has(PermissionFlagsBits.ViewChannel) || !permissions.has(PermissionFlagsBits.SendMessages)) {
+      return false;
+    }
+    return channel.send({ content: reminder }).then(() => true).catch(() => false);
+  };
+
+  const systemChannel = guild.systemChannel;
+  if (systemChannel && isTextSendableChannel(systemChannel)) {
+    const sent = await attemptSend(systemChannel);
+    if (sent) {
+      return;
+    }
+  }
+
+  for (const channel of guild.channels.cache.values()) {
+    if (!isTextSendableChannel(channel)) {
+      continue;
+    }
+    const sent = await attemptSend(channel);
+    if (sent) {
+      return;
+    }
+  }
+}
+
 function attachClientEventHandlers(client: Client, { hasMessageContent }: ClientAttachmentOptions) {
   client.once(Events.ClientReady, async (c) => {
     console.log(`[discord] Logged in as ${c.user.tag}`);
@@ -157,6 +208,7 @@ function attachClientEventHandlers(client: Client, { hasMessageContent }: Client
     }
 
     await syncGuildSettingsForGuild(guild);
+    await sendInitReminder(guild);
   });
 
   client.on(Events.GuildUpdate, async (_oldGuild, newGuild) => {
