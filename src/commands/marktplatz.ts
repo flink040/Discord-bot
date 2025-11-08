@@ -46,8 +46,6 @@ type TradeIntentRow = {
   quantity: number | string | null;
   price?: number | string | null;
   price_type?: PriceType | null;
-  price_min: number | string | null;
-  price_max: number | string | null;
   contact_method: string | null;
   notes: string | null;
   updated_at: string | null;
@@ -94,37 +92,6 @@ function normalizeNumber(value: number | string | null | undefined): number | nu
   return numeric;
 }
 
-function formatPriceRange(
-  minRaw: number | string | null | undefined,
-  maxRaw: number | string | null | undefined,
-): string | null {
-  const min = normalizeNumber(minRaw);
-  const max = normalizeNumber(maxRaw);
-
-  if (min === null && max === null) {
-    return null;
-  }
-
-  if (min !== null && max !== null) {
-    if (Math.abs(min - max) < Number.EPSILON) {
-      return `${PRICE_FORMATTER.format(min)} Smaragde`;
-    }
-    const lower = Math.min(min, max);
-    const upper = Math.max(min, max);
-    return `${PRICE_FORMATTER.format(lower)} – ${PRICE_FORMATTER.format(upper)} Smaragde`;
-  }
-
-  if (min !== null) {
-    return `ab ${PRICE_FORMATTER.format(min)} Smaragde`;
-  }
-
-  if (max !== null) {
-    return `bis ${PRICE_FORMATTER.format(max)} Smaragde`;
-  }
-
-  return null;
-}
-
 function formatIntentPrice(row: TradeIntentRow): string | null {
   const price = normalizeNumber(row.price);
   const priceType = row.price_type;
@@ -147,7 +114,7 @@ function formatIntentPrice(row: TradeIntentRow): string | null {
     return PRICE_TYPE_LABELS[priceType];
   }
 
-  return formatPriceRange(row.price_min, row.price_max);
+  return null;
 }
 
 function formatQuantity(quantityRaw: number | string | null): string | null {
@@ -305,83 +272,42 @@ async function fetchTradeIntents(
   filter: IntentType[] | null,
 ): Promise<TradeIntentRow[]> {
   const supabase = getSupabaseClient();
-  const selectWithPrice =
+  const selectFields =
     `id,
      item_id,
      intent_type,
      quantity,
      price,
      price_type,
-     price_min,
-     price_max,
      contact_method,
      notes,
      updated_at,
      created_at,
      items(name)`;
 
-  const legacySelect =
-    `id,
-     item_id,
-     intent_type,
-     quantity,
-     price_min,
-     price_max,
-     contact_method,
-     notes,
-     updated_at,
-     created_at,
-     items(name)`;
+  let query = supabase
+    .from('item_trade_intents')
+    .select(selectFields)
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .order('updated_at', { ascending: false });
 
-  const createQuery = (select: string) => {
-    let query = supabase
-      .from('item_trade_intents')
-      .select(select)
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .order('updated_at', { ascending: false });
-
-    if (filter && filter.length === 1) {
-      query = query.eq('intent_type', filter[0]);
-    } else if (filter && filter.length > 1) {
-      query = query.in('intent_type', filter);
-    }
-
-    return query;
-  };
-
-  const runQuery = async (select: string): Promise<TradeIntentRow[]> => {
-    const { data, error } = (await createQuery(select)) as unknown as {
-      data: TradeIntentRow[] | null;
-      error: { code?: string; message?: string } | null;
-    };
-    if (error) {
-      throw error;
-    }
-    return data ?? [];
-  };
-
-  try {
-    return await runQuery(selectWithPrice);
-  } catch (error) {
-    const code = typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code?: string }).code ?? '')
-      : '';
-    const message = typeof error === 'object' && error !== null && 'message' in error
-      ? String((error as { message?: string }).message ?? '')
-      : '';
-
-    const isMissingPriceColumns =
-      code === '42703' ||
-      code === 'PGRST116' ||
-      message.toLowerCase().includes('column') && message.toLowerCase().includes('price');
-
-    if (!isMissingPriceColumns) {
-      throw error;
-    }
-
-    return await runQuery(legacySelect);
+  if (filter && filter.length === 1) {
+    query = query.eq('intent_type', filter[0]);
+  } else if (filter && filter.length > 1) {
+    query = query.in('intent_type', filter);
   }
+
+  const { data, error } = (await query) as unknown as {
+    data: TradeIntentRow[] | null;
+    error: { code?: string; message?: string } | null;
+  };
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
 }
 
 function buildEmbed(
