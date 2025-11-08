@@ -211,15 +211,22 @@ type BidSample = {
 };
 
 function extractBids(rows: SnapshotRow[]): BidSample[] {
-  return rows
-    .map(row => {
-      const amount = normalizeNumber(row.current_bid);
-      const collectedAt = new Date(row.collected_at);
-      if (amount === null || Number.isNaN(collectedAt.getTime())) return null;
-      return { amount, collectedAt } satisfies BidSample;
-    })
-    .filter((value): value is BidSample => value !== null)
-    .sort((a, b) => a.collectedAt.getTime() - b.collectedAt.getTime());
+  const byListing = new Map<string, BidSample>();
+
+  for (const row of rows) {
+    const amount = normalizeNumber(row.current_bid);
+    const collectedAt = new Date(row.collected_at);
+    if (amount === null || Number.isNaN(collectedAt.getTime())) continue;
+
+    const existing = byListing.get(row.listing_id);
+    if (!existing || amount > existing.amount || (amount === existing.amount && collectedAt > existing.collectedAt)) {
+      byListing.set(row.listing_id, { amount, collectedAt });
+    }
+  }
+
+  return Array.from(byListing.values()).sort(
+    (a, b) => a.collectedAt.getTime() - b.collectedAt.getTime(),
+  );
 }
 
 function averageAmount(samples: BidSample[], days?: number): number | null {
