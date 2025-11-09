@@ -399,7 +399,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     let moderationChannel: SupportedGuildTextChannel | null = null;
 
     const moderationChoice = await askYesNo(
-      'Möchtest du das Moderationsfeature nutzen?',
+      'Möchtest du das Moderationsfeature nutzen? ⚠️ Hierbei handelt es sich um ein experimental Feature ⚠️',
       'init-moderation-use',
       '⚠️ Es wurde nicht entschieden, ob das Moderationsfeature genutzt werden soll.',
     );
@@ -470,7 +470,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
 
       if (moderationChannel) {
         const automodChoice = await askYesNo(
-          'Möchtest du das Automod-Feature ebenfalls nutzen?',
+          'Möchtest du das Automod-Feature ebenfalls nutzen? ⚠️ Dieses Feature ist sehr sensitiv und kann zu unvorhergesehenen Bans führen ⚠️ ',
           'init-automod-use',
           '⚠️ Es wurde nicht entschieden, ob das Automod-Feature genutzt werden soll.',
         );
