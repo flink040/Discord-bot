@@ -99,6 +99,27 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     guildIdForInvalidation = guild.id;
 
     const me = guild.members.me ?? (await guild.members.fetch(interaction.client.user.id));
+
+    const requiredPermissions: Array<[bigint, string]> = [
+      [PermissionFlagsBits.ManageRoles, 'Rollen verwalten'],
+      [PermissionFlagsBits.ManageChannels, 'Kanäle verwalten'],
+    ];
+
+    const missingPermissions = requiredPermissions.filter(
+      ([permission]) => !me.permissions.has(permission),
+    );
+
+    if (missingPermissions.length > 0) {
+      const missingList = missingPermissions.map(([, label]) => `• ${label}`).join('\n');
+      await interaction.editReply(
+        [
+          '❌ Ich habe nicht alle benötigten Berechtigungen, um die Einrichtung abzuschließen.',
+          'Bitte gewähre mir die folgenden Berechtigungen und versuche es anschließend erneut:',
+          missingList,
+        ].join('\n'),
+      );
+      return;
+    }
     const requestedMarketplaceInterval = interaction.options.getInteger('marktplatz_intervall');
     const canManageRoles = me.permissions.has(PermissionFlagsBits.ManageRoles);
     const canManageChannels = me.permissions.has(PermissionFlagsBits.ManageChannels);
