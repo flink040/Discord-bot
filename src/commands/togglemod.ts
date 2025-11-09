@@ -101,6 +101,7 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
     }
 
     await updateModFeatureState(interaction.guildId, desiredState, interaction.guild?.name);
+    invalidateGuildInitializationCache(interaction.guildId);
 
     let extraNotice = '';
     if (desiredState === 'disable') {
