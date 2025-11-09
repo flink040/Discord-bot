@@ -25,6 +25,7 @@ import {
 } from '../utils/marketplace';
 import { findVerifiedRole, VERIFIED_ROLE_NAME } from '../utils/verification';
 import { invalidateGuildInitializationCache } from '../utils/initialization';
+import { updateAutomodState } from '../utils/guild-feature-settings';
 
 const MODERATION_CHANNEL_NAME = 'moderation-log';
 const MARKETPLACE_CHANNEL_NAME = 'marktplatz';
@@ -459,10 +460,37 @@ export const execute = async (rawInteraction: ChatInputCommandInteraction) => {
             .fetch(existingModerationChannelId)
             .catch(() => null);
           if (isSupportedGuildTextChannel(fallback)) {
+            moderationChannel = fallback;
             updates.push(`ℹ️ Der bisher gespeicherte Moderationschannel (${fallback}) bleibt unverändert.`);
           }
         } catch (error) {
           console.warn('[init] Failed to keep previous moderation channel', error);
+        }
+      }
+
+      if (moderationChannel) {
+        const automodChoice = await askYesNo(
+          'Möchtest du das Automod-Feature ebenfalls nutzen?',
+          'init-automod-use',
+          '⚠️ Es wurde nicht entschieden, ob das Automod-Feature genutzt werden soll.',
+        );
+
+        if (automodChoice === true) {
+          try {
+            await updateAutomodState(guild.id, 'enable', guild.name);
+            updates.push('✅ Das Automod-Feature wurde aktiviert.');
+          } catch (error) {
+            console.error('[init] Failed to enable automod', error);
+            warnings.push('⚠️ Das Automod-Feature konnte nicht aktiviert werden.');
+          }
+        } else if (automodChoice === false) {
+          try {
+            await updateAutomodState(guild.id, 'disable', guild.name);
+            updates.push('ℹ️ Das Automod-Feature wurde deaktiviert.');
+          } catch (error) {
+            console.error('[init] Failed to disable automod', error);
+            warnings.push('⚠️ Die Einstellung für das Automod-Feature konnte nicht gespeichert werden.');
+          }
         }
       }
     } else if (moderationChoice === false) {
