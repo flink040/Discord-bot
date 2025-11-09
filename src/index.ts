@@ -143,9 +143,10 @@ function isTextSendableChannel(channel: GuildBasedChannel): channel is GuildText
 
 async function sendInitReminder(guild: Guild) {
   const reminder = [
-    '👋 Hallo! Danke, dass du den antiselbstjustiz Bot hinzugefügt hast.',
+    '👋 Hallo! Danke, dass du den OP-Item-DB Bot hinzugefügt hast.',
     'Bitte führe zuerst `/init` aus, damit der Bot korrekt eingerichtet werden kann.',
     'Dieser Schritt muss von der Server-Inhaberin/dem Server-Inhaber oder einer Rolle mit Administrator-Rechten durchgeführt werden.',
+    'Weitere Informationen findest du auf https://op-item-db.com/discord-bot .',
   ].join('\n');
 
   const me = guild.members.me;
