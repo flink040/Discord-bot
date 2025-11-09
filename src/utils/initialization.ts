@@ -1,5 +1,6 @@
 import type { Guild } from 'discord.js';
 
+import { defaultFeatureState, fetchModFeatureState } from './guild-feature-settings';
 import { getModerationChannelId } from './moderation';
 import { getMarketplaceChannelId } from './marketplace';
 import { findVerifiedRole, VERIFIED_ROLE_NAME } from './verification';
@@ -34,14 +35,15 @@ export async function getGuildInitializationState(guild: Guild): Promise<GuildIn
     return { initialized: cached.initialized, missing: [...cached.missing] };
   }
 
-  const [moderationChannelId, marketplaceChannelId] = await Promise.all([
+  const [moderationChannelId, marketplaceChannelId, modFeatureState] = await Promise.all([
     getModerationChannelId(guild.id),
     getMarketplaceChannelId(guild.id),
+    fetchModFeatureState(guild.id).catch(() => defaultFeatureState()),
   ]);
 
   const missing: string[] = [];
 
-  if (!moderationChannelId) {
+  if (modFeatureState === 'enable' && !moderationChannelId) {
     missing.push('Moderationschannel');
   }
 
